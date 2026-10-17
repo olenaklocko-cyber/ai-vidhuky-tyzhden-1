@@ -1,0 +1,215 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #333;
+}
+
+.app {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.shapka {
+  text-align: center;
+  padding: 30px 0;
+}
+
+.shapka h1 {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+.shapka p {
+  color: #666;
+  font-size: 14px;
+}
+
+.blok {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.blok h2 {
+  font-size: 18px;
+  margin-bottom: 16px;
+}
+
+textarea {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 15px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: #1677ff;
+}
+
+.prykaldy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #666;
+}
+
+.btn-pryklad {
+  padding: 4px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-pryklad:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.btn-analyz {
+  margin-top: 16px;
+  width: 100%;
+  padding: 12px;
+  background: #1677ff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.btn-analyz:hover:not(:disabled) {
+  background: #4096ff;
+}
+
+.btn-analyz:disabled {
+  background: #d9d9d9;
+  cursor: not-allowed;
+}
+
+.pomylka {
+  border-left: 4px solid #ff4d4f;
+}
+
+.pomylka h2 {
+  color: #ff4d4f;
+}
+
+.pomylka pre {
+  background: #fff1f0;
+  padding: 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  overflow-x: auto;
+}
+
+.resultat {
+  border-left: 4px solid #52c41a;
+}
+
+.badge-retry {
+  font-size: 12px;
+  background: #faad14;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 8px;
+}
+
+.vizualizatsiya {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.kartka {
+  background: #fafafa;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 12px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.znachennya {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.ocinka {
+  font-size: 16px;
+}
+
+.chyslo {
+  font-size: 14px;
+  color: #666;
+}
+
+.tegi {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.spysok-tegiv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.teg {
+  background: #e6f4ff;
+  color: #1677ff;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.teg.emotsiya {
+  background: #fff7e6;
+  color: #d48806;
+}
+
+.syryy-json summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: #666;
+}
+
+.syryy-json pre {
+  background: #1a1a2e;
+  color: #0f0;
+  padding: 16px;
+  border-radius: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  overflow-x: auto;
+  font-family: "SF Mono", Monaco, monospace;
+}
