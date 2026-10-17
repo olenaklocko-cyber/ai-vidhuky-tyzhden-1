@@ -1,4 +1,9 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+import path from "path";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, ".env") });
 import express from "express";
 import cors from "cors";
 import { z } from "zod";
@@ -148,12 +153,12 @@ app.post("/api/analiz", async (req, res) => {
   try {
     // Збираємо промпт: системний + приклади + запит користувача
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-3.8-flash",
       systemInstruction: SYSTEMNYI_PROMPT,
       // 6. ТЕМПЕРАТУРА: 0 = точність (нам потрібен стабільний JSON), 1 = творчість
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 500,
+        maxOutputTokens: 1024,
       },
     });
 
@@ -200,6 +205,73 @@ app.post("/api/analiz", async (req, res) => {
 /** GET /api/zdorovya — перевірка що сервер працює */
 app.get("/api/zdorovya", (_req, res) => {
   res.json({ ok: true, chas: new Date().toISOString() });
+});
+
+// ============================================================
+// RAG: завантаження документів + пошук + відповідь
+// ============================================================
+import { zavantazhytyDokumenty, VektorBaza, vidpovistyPoRag } from "./rag.js";
+
+const vektorBaza = new VektorBaza();
+
+/** POST /api/rag/zavantazhyty — завантажуємо документи та рахуємо ембеддинги */
+app.post("/api/rag/zavantazhyty", async (_req, res) => {
+  try {
+    const dokumenty = zavantazhytyDokumenty();
+    let vseShmatky = 0;
+
+    for (const doc of dokumenty) {
+      const kilkist = await vektorBaza.dodatyDokument(doc.nazva, doc.tekst);
+      vseShmatky += kilkist;
+    }
+
+    res.json({
+      dokumentiv: dokumenty.length,
+      shmatkiv: vseShmatky,
+      nazvy: dokumenty.map((d) => d.nazva),
+    });
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка завантаження",
+    });
+  }
+});
+
+/** POST /api/rag/zapyt — ставимо запит, AI відповідає по документах */
+app.post("/api/rag/zapyt", async (req, res) => {
+  const { zapyt } = req.body as { zapyt?: string };
+
+  if (!zapyt || zapyt.trim().length < 5) {
+    return res.status(400).json({ pomylka: "Запит має містити мінімум 5 символів" });
+  }
+
+  if (vektorBaza.kilkistShmatkiv === 0) {
+    return res.status(400).json({
+      pomylka: "Документи ще не завантажені. Натисни «Завантажити документи».",
+    });
+  }
+
+  try {
+    // Крок 1: шукаємо схожі шматки
+    const знaydeni = await vektorBaza.shukaty(zapyt, 3);
+
+    // Крок 2: генеруємо відповідь по знайденому
+    const vidpovid = await vidpovistyPoRag(zapyt, знaydeni);
+
+    res.json(vidpovid);
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка RAG",
+    });
+  }
+});
+
+/** GET /api/rag/status — скільки документів у базі */
+app.get("/api/rag/status", (_req, res) => {
+  res.json({
+    shmatkiv: vektorBaza.kilkistShmatkiv,
+    dokumenty: vektorBaza.dokumenty,
+  });
 });
 
 app.listen(PORT, () => {

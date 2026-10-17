@@ -213,3 +213,109 @@ textarea:focus {
   overflow-x: auto;
   font-family: "SF Mono", Monaco, monospace;
 }
+
+/* ============ ВКЛАДКИ ============ */
+.vkladky {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.vkladka {
+  padding: 10px 20px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.vkladka.aktyvna {
+  border-color: #1677ff;
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.vkladka:hover:not(.aktyvna) {
+  border-color: #91caff;
+}
+
+/* ============ RAG ============ */
+.rag-status {
+  border-left: 4px solid #722ed1;
+}
+
+.rag-info {
+  margin-bottom: 12px;
+}
+
+.rag-info > span {
+  font-size: 15px;
+}
+
+.rag-polye {
+  display: flex;
+  gap: 8px;
+}
+
+.rag-polye input {
+  flex: 1;
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.rag-polye input:focus {
+  outline: none;
+  border-color: #1677ff;
+}
+
+.rag-polye .btn-analyz {
+  margin-top: 0;
+  width: auto;
+  padding: 12px 24px;
+}
+
+.rag-vidpovid {
+  border-left: 4px solid #722ed1;
+}
+
+.rag-tekst {
+  background: #f9f0ff;
+  padding: 16px;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  white-space: pre-wrap;
+}
+
+.rag-vidpovid h3 {
+  font-size: 15px;
+  margin-bottom: 12px;
+  color: #722ed1;
+}
+
+.dzherelo {
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.dzherelo strong {
+  color: #722ed1;
+  font-size: 13px;
+}
+
+.dzherelo p {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #666;
+  font-style: italic;
+}
