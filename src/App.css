@@ -319,3 +319,90 @@ textarea:focus {
   color: #666;
   font-style: italic;
 }
+
+/* ============ АГЕНТ ============ */
+.agent-zapyt {
+  border-left: 4px solid #fa8c16;
+}
+
+.agent-info {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 16px;
+}
+
+.agent-lanzyuzhok {
+  border-left: 4px solid #fa8c16;
+}
+
+.kroky {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.krok {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.krok-nomer {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 8px;
+}
+
+.krok-typ {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.krok-opys {
+  margin-top: 8px;
+}
+
+.krok-opys p {
+  font-size: 14px;
+  color: #444;
+  white-space: pre-wrap;
+}
+
+.krok-argy,
+.krok-rezultat {
+  background: #1a1a2e;
+  color: #0f0;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-x: auto;
+  font-family: "SF Mono", Monaco, monospace;
+  margin-top: 6px;
+}
+
+.krok-mirkuvannya {
+  border-left: 3px solid #1677ff;
+}
+
+.krok-vyklykTool {
+  border-left: 3px solid #fa8c16;
+}
+
+.krok-rezultatTool {
+  border-left: 3px solid #52c41a;
+}
+
+.krok-vdpovisd {
+  border-left: 3px solid #722ed1;
+}
+
+.agent-vdpovisd {
+  border-left: 4px solid #fa8c16;
+}
+
+.agent-tools {
+  margin-top: 16px;
+}

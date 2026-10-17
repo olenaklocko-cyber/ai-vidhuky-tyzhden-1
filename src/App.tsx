@@ -22,6 +22,21 @@ interface RagVidpovid {
   shmatkivZnaydeno: number;
 }
 
+interface KrokAgenta {
+  krok: number;
+  typ: "mirkuvannya" | "vyklykTool" | "rezultatTool" | "vdpovisd";
+  opys: string;
+  tool?: string;
+  argy?: Record<string, unknown>;
+  rezultat?: string;
+}
+
+interface VidpovidAgenta {
+  vdpovisd: string;
+  kroky: KrokAgenta[];
+  toolVykorystano: string[];
+}
+
 const PRYKLADY_VIDHUKIV = [
   "Готель просто чудовий! Номер чистий, сніданки смачні, персонал дуже уважний. Єдиний мінус — далеко від центру, але є безкоштовний шатл.",
   "Жах. Номер брудний, кондиціонер не працював, на рецепції ніхто не допоміг. Більше сюди не приїду.",
@@ -34,6 +49,12 @@ const PRYKLADY_ZAPYTIV_RAG = [
   "Які техніки промпт-інженерії ти знаєш?",
 ];
 
+const PRYKLADY_ZAPYTIV_AGENT = [
+  "Скільки буде 1500 доларів у євро?",
+  "Знайди подорожі в Італії до 1300 доларів",
+  "Обчисли (25 * 4 + 100) / 3 і поясни що вийшло",
+];
+
 const TONALNIST_KOLIR: Record<string, string> = {
   позитивна: "#52c41a",
   негативна: "#ff4d4f",
@@ -42,7 +63,7 @@ const TONALNIST_KOLIR: Record<string, string> = {
 };
 
 function App() {
-  const [vkladka, setVkladka] = useState<"analiz" | "rag">("analiz");
+  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent">("analiz");
 
   // === Стан для аналізу відгуків ===
   const [vidhuk, setVidhuk] = useState("");
@@ -57,6 +78,12 @@ function App() {
   const [ragStatus, setRagStatus] = useState<{ shmatkiv: number; dokumenty: string[] } | null>(null);
   const [ragZavantazhennya, setRagZavantazhennya] = useState(false);
   const [ragShukayemo, setRagShukayemo] = useState(false);
+
+  // === Стан для Агента ===
+  const [agentZapyt, setAgentZapyt] = useState("");
+  const [agentVidpovid, setAgentVidpovid] = useState<VidpovidAgenta | null>(null);
+  const [agentPomylka, setAgentPomylka] = useState("");
+  const [agentPratsyuye, setAgentPratsyuye] = useState(false);
 
   const analyzuvaty = async () => {
     if (vidhuk.trim().length < 10) {
@@ -115,6 +142,26 @@ function App() {
     } finally { setRagShukayemo(false); }
   };
 
+  // === Агент: запит ===
+  const zapitytyAgenta = async () => {
+    if (agentZapyt.trim().length < 5) return;
+    setAgentPratsyuye(true);
+    setAgentVidpovid(null);
+    setAgentPomylka("");
+    try {
+      const res = await fetch("http://localhost:3001/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zapyt: agentZapyt }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setAgentPomylka(data.pomylka || "Помилка"); return; }
+      setAgentVidpovid(data);
+    } catch {
+      setAgentPomylka("Сервер не відповідає");
+    } finally { setAgentPratsyuye(false); }
+  };
+
   return (
     <div className="app">
       <header className="shapka">
@@ -134,6 +181,12 @@ function App() {
             onClick={() => setVkladka("rag")}
           >
             📚 RAG-асистент
+          </button>
+          <button
+            className={`vkladka ${vkladka === "agent" ? "aktyvna" : ""}`}
+            onClick={() => setVkladka("agent")}
+          >
+            🛠 Агент
           </button>
         </div>
       </header>
@@ -280,6 +333,98 @@ function App() {
                   </div>
                 ))}
               </section>
+            )}
+          </>
+        )}
+
+        {/* ============ ВКЛАДКА 3: АГЕНТ ============ */}
+        {vkladka === "agent" && (
+          <>
+            {/* Запит до агента */}
+            <section className="blok agent-zapyt">
+              <h2>🛠 Запит до агента</h2>
+              <p className="agent-info">
+                Агент має 3 інструменти: 🔢 калькулятор, 🔎 пошук подорожей, 💱 конвертер валют.
+                Він сам вирішує який викликати.
+              </p>
+              <div className="rag-polye">
+                <input
+                  type="text"
+                  value={agentZapyt}
+                  onChange={(e) => setAgentZapyt(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && zapitytyAgenta()}
+                  placeholder="Наприклад: Скільки 1000 доларів у євро?"
+                />
+                <button
+                  className="btn-analyz"
+                  onClick={zapitytyAgenta}
+                  disabled={agentPratsyuye || agentZapyt.trim().length < 5}
+                >
+                  {agentPratsyuye ? "⏳ Працюю..." : "🚀 Запустити"}
+                </button>
+              </div>
+              <div className="prykaldy">
+                <span>Приклади:</span>
+                {PRYKLADY_ZAPYTIV_AGENT.map((p, i) => (
+                  <button key={i} onClick={() => setAgentZapyt(p)} className="btn-pryklad">#{i + 1}</button>
+                ))}
+              </div>
+            </section>
+
+            {/* Помилка */}
+            {agentPomylka && (
+              <section className="blok pomylka">
+                <h2>❌ Помилка</h2>
+                <p>{agentPomylka}</p>
+              </section>
+            )}
+
+            {/* Ланцюжок міркувань + відповідь */}
+            {agentVidpovid && (
+              <>
+                {/* Ланцюжок кроків */}
+                <section className="blok agent-lanzyuzhok">
+                  <h2>🧩 Ланцюжок міркувань агента</h2>
+                  <div className="kroky">
+                    {agentVidpovid.kroky.map((k, i) => (
+                      <div key={i} className={`krok krok-${k.typ}`}>
+                        <span className="krok-nomer">Крок {k.krok}</span>
+                        <span className="krok-typ">
+                          {k.typ === "mirkuvannya" && "🧠 Думаю"}
+                          {k.typ === "vyklykTool" && `🔧 Виклик: ${k.tool}`}
+                          {k.typ === "rezultatTool" && `📥 Результат: ${k.tool}`}
+                          {k.typ === "vdpovisd" && "💬 Відповідь"}
+                        </span>
+                        <div className="krok-opys">
+                          {k.typ === "vyklykTool" && k.argy && (
+                            <pre className="krok-argy">{JSON.stringify(k.argy, null, 2)}</pre>
+                          )}
+                          {k.typ === "rezultatTool" && (
+                            <pre className="krok-rezultat">{k.rezultat}</pre>
+                          )}
+                          {k.typ !== "vyklykTool" && k.typ !== "rezultatTool" && (
+                            <p>{k.opys}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* Фінальна відповідь */}
+                <section className="blok resultat agent-vdpovisd">
+                  <h2>✅ Готова відповідь</h2>
+                  <div className="rag-tekst">{agentVidpovid.vdpovisd}</div>
+                  <div className="agent-tools">
+                    <span className="label">Використані інструменти:</span>
+                    <div className="spysok-tegiv">
+                      {agentVidpovid.toolVykorystano.map((t, i) => (
+                        <span key={i} className="teg">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              </>
             )}
           </>
         )}

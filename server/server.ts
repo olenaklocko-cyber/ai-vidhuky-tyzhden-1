@@ -274,6 +274,29 @@ app.get("/api/rag/status", (_req, res) => {
   });
 });
 
+// ============================================================
+// АГЕНТ: інструменти + ланцюжок міркувань
+// ============================================================
+import { zapytDoAgenta } from "./agent.js";
+
+/** POST /api/agent — запит до агента з інструментами */
+app.post("/api/agent", async (req, res) => {
+  const { zapyt } = req.body as { zapyt?: string };
+
+  if (!zapyt || zapyt.trim().length < 5) {
+    return res.status(400).json({ pomylka: "Запит має містити мінімум 5 символів" });
+  }
+
+  try {
+    const vidpovid = await zapytDoAgenta(zapyt);
+    res.json(vidpovid);
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка агента",
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Сервер працює на http://localhost:${PORT}`);
 });
