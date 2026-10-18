@@ -9,6 +9,75 @@ interface Analiz {
   rekomendatsiya: boolean;
   korektna_mova: boolean;
   retry?: boolean;
+  keshHit?: boolean;
+  meta?: MetaVykyku;
+}
+
+/** Метадані виклику: токени, ціна, час (тиждень 6) */
+interface MetaVykyku {
+  model: string;
+  tokensIn: number;
+  thoughts: number;
+  tokensOut: number;
+  keshovano: number;
+  usd: number;
+  ms: number;
+  keshHit: boolean;
+}
+
+interface StanStats {
+  vykykiv: number;
+  keshHitiv: number;
+  tokensIn: number;
+  thoughts: number;
+  tokensOut: number;
+  usd: number;
+  ms: number;
+  usdSer?: number;
+  msSer?: number;
+  keshEkonomiyaUsd?: number;
+}
+
+interface FichaStats extends StanStats {
+  nayva: string;
+}
+
+interface StatsVymiruvacha {
+  zaVse: StanStats;
+  zaFicharamy: FichaStats[];
+  limitUsd: number | null;
+  tsiny: Record<string, { vkhid: number; vykhid: number; keshVkhid: number }>;
+}
+
+interface KlyuchoviChysla {
+  model: string;
+  vykykiv: number;
+  yakistPrOjshlo: number;
+  vsiogo: number;
+  tokVkhid: number;
+  tokDumky: number;
+  tokVykhid: number;
+  usdSum: number;
+  usdSer: number;
+  msSer: number;
+}
+
+interface PrypadEksperymentu {
+  id: number;
+  opys: string;
+  doProjshov: boolean;
+  pislyaProjshov: boolean;
+  doPomylky: string[];
+  pislyaPomylky: string[];
+}
+
+interface ZvitEksperymentu {
+  chas: string;
+  doK: KlyuchoviChysla;
+  pislyaK: KlyuchoviChysla;
+  kesh: { usd: number; ms: number; keshHit: boolean; prykldVykykiv: number };
+  pryypady: PrypadEksperymentu[];
+  mnozhnyky: { dorozhzheDo: number; povilnishaDo: number };
 }
 
 interface Pomylka {
@@ -87,14 +156,22 @@ const TONALNIST_KOLIR: Record<string, string> = {
   змішана: "#faad14",
 };
 
+/** Форматування ціни: дрібні суми — 5 знаків після коми */
+const formatUsd = (x: number) => `$${x < 0.01 ? x.toFixed(5) : x.toFixed(4)}`;
+
+/** На скільки відсотків зменшилось (було → стало) */
+const skidkaProtsent = (bulo: number, stalo: number) =>
+  bulo === 0 ? 0 : Math.max(0, Math.round((1 - stalo / bulo) * 100));
+
 function App() {
-  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent" | "vision" | "evals">("analiz");
+  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent" | "vision" | "evals" | "cina">("analiz");
 
   // === Стан для аналізу відгуків ===
   const [vidhuk, setVidhuk] = useState("");
   const [analiz, setAnaliz] = useState<Analiz | null>(null);
   const [pomylka, setPomylka] = useState<Pomylka | null>(null);
   const [zavantazhennya, setZavantazhennya] = useState(false);
+  const [rezhymAnalizu, setRezhymAnalizu] = useState<"ekonom" | "zvych">("ekonom");
 
   // === Стан для RAG ===
   const [ragZapyt, setRagZapyt] = useState("");
@@ -136,6 +213,32 @@ function App() {
   const [sudyaVerdykty, setSudyaVerdykty] = useState<Record<string, string>>({});
   const [sudyyaPratsyuye, setSudyyaPratsyuye] = useState("");
 
+  // === Стан для «Ціна і швидкість» (тиждень 6) ===
+  const [stats, setStats] = useState<StatsVymiruvacha | null>(null);
+  const [limitInput, setLimitInput] = useState("");
+  const [zvitEks, setZvitEks] = useState<ZvitEksperymentu | null>(null);
+  const [eksPratsyuye, setEksPratsyuye] = useState(false);
+  const [vymirPovidomlennya, setVymirPovidomlennya] = useState("");
+
+  // Завантажуємо статистику вартості при відкритті вкладки
+  useEffect(() => {
+    if (vkladka !== "cina") return;
+    ponovytyStatsFn();
+    fetch("http://localhost:3001/api/eksperyment/ostanniy")
+      .then((r) => r.json())
+      .then((d) => { if (d) setZvitEks(d); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vkladka]);
+
+  const ponovytyStatsFn = async () => {
+    try {
+      const d = await fetch("http://localhost:3001/api/vymiruvach/stats").then((r) => r.json());
+      setStats(d);
+      if (d.limitUsd !== null && d.limitUsd !== undefined) setLimitInput(String(d.limitUsd));
+    } catch { /* сервер не відповідає — покажемо помилку при діях */ }
+  };
+
   // Завантажуємо збережені звіти evals при відкритті вкладки
   useEffect(() => {
     if (vkladka !== "evals") return;
@@ -161,11 +264,12 @@ function App() {
       const response = await fetch("http://localhost:3001/api/analiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vidhuk }),
+        body: JSON.stringify({ vidhuk, rezhym: rezhymAnalizu }),
       });
       const data = await response.json();
       if (!response.ok) { setPomylka(data); return; }
       setAnaliz(data);
+      ponovytyStatsFn();
     } catch {
       setPomylka({ pomylka: "Не вдалося з'єднатися з сервером" });
     } finally { setZavantazhennya(false); }
@@ -395,6 +499,53 @@ function App() {
     }
   };
 
+  // === Тиждень 6: ліміт витрат ===
+  const vstanovytyLimitFn = async (znachennya: number | null) => {
+    setVymirPovidomlennya("");
+    try {
+      const res = await fetch("http://localhost:3001/api/vymiruvach/limit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limitUsd: znachennya }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setVymirPovidomlennya(`❌ ${data.pomylka}`); return; }
+      setVymirPovidomlennya(znachennya === null ? "♾ Ліміт знято — витрати не обмежені" : `✅ Ліміт встановлено: $${znachennya}`);
+      ponovytyStatsFn();
+    } catch {
+      setVymirPovidomlennya("❌ Сервер не відповідає");
+    }
+  };
+
+  // === Тиждень 6: скинути лічильники ===
+  const sklastyLichilnykyFn = async () => {
+    setVymirPovidomlennya("");
+    try {
+      await fetch("http://localhost:3001/api/vymiruvach/sklasty", { method: "POST" });
+      setVymirPovidomlennya("🧹 Лічильники та кеш очищено");
+      ponovytyStatsFn();
+    } catch {
+      setVymirPovidomlennya("❌ Сервер не відповідає");
+    }
+  };
+
+  // === Тиждень 6: експеримент до/після ===
+  const zapustytyEksperymentFn = async () => {
+    setEksPratsyuye(true);
+    setVymirPovidomlennya("");
+    try {
+      const res = await fetch("http://localhost:3001/api/eksperyment", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setVymirPovidomlennya(`❌ ${data.pomylka}`); return; }
+      setZvitEks(data);
+      ponovytyStatsFn();
+    } catch {
+      setVymirPovidomlennya("❌ Сервер не відповідає");
+    } finally {
+      setEksPratsyuye(false);
+    }
+  };
+
   return (
     <div className="app">
       <header className="shapka">
@@ -433,6 +584,12 @@ function App() {
           >
             📊 Evals
           </button>
+          <button
+            className={`vkladka ${vkladka === "cina" ? "aktyvna" : ""}`}
+            onClick={() => setVkladka("cina")}
+          >
+            💰 Ціна і швидкість
+          </button>
         </div>
       </header>
 
@@ -461,6 +618,22 @@ function App() {
               >
                 {zavantazhennya ? "⏳ Аналізую..." : "🔍 Проаналізувати"}
               </button>
+
+              {/* Режим аналізу: економія vs базовий шлях */}
+              <div className="rezhym-pereklyuchach">
+                <button
+                  className={`rezhym-knopka ${rezhymAnalizu === "ekonom" ? "aktyvna" : ""}`}
+                  onClick={() => setRezhymAnalizu("ekonom")}
+                >
+                  ⚡ Економний <small>lite-модель + кеш</small>
+                </button>
+                <button
+                  className={`rezhym-knopka ${rezhymAnalizu === "zvych" ? "aktyvna" : ""}`}
+                  onClick={() => setRezhymAnalizu("zvych")}
+                >
+                  🎯 Звичайний <small>3.8 + повний промпт</small>
+                </button>
+              </div>
             </section>
 
             {pomylka && (
@@ -476,6 +649,25 @@ function App() {
             {analiz && (
               <section className="blok resultat">
                 <h2>📊 Результат аналізу{analiz.retry && <span className="badge-retry"> (retry)</span>}</h2>
+
+                {/* Метрики виклику: токени, ціна, час (тиждень 6) */}
+                {analiz.meta && (
+                  <div className={`meta-vykyku ${analiz.keshHit ? "meta-kesh" : ""}`}>
+                    <span className="meta-elyement" title="Модель або кеш">
+                      {analiz.keshHit ? "💾 З кешу (повтор)" : `⚡ ${analiz.meta.model}`}
+                    </span>
+                    <span className="meta-elyement" title="Скільки токенів з'їдено">
+                      🍬 токени: {analiz.meta.tokensIn} вхід{analiz.meta.thoughts > 0 && ` + ${analiz.meta.thoughts} думок`} + {analiz.meta.tokensOut} вихід
+                    </span>
+                    <span className="meta-elyement meta-cina" title="Вартість виклику">
+                      💲 ${analiz.meta.usd < 0.001 ? analiz.meta.usd.toFixed(5) : analiz.meta.usd.toFixed(4)}
+                    </span>
+                    <span className="meta-elyement" title="Час відповіді">
+                      ⏱ {analiz.meta.ms} мс
+                    </span>
+                  </div>
+                )}
+
                 <div className="vizualizatsiya">
                   <div className="kartka">
                     <span className="label">Тональність</span>
@@ -898,6 +1090,313 @@ function App() {
                   </div>
                 )}
               </section>
+            )}
+          </>
+        )}
+        {/* ============ ВКЛАДКА 6: ЦІНА І ШВИДКІСТЬ ============ */}
+        {vkladka === "cina" && (
+          <>
+            {/* Пояснення + ціни */}
+            <section className="blok">
+              <h2>💰 Вартість AI: токени, моделі, кеш</h2>
+              <p className="agent-info">
+                Кожен запит до моделі платний. Модель рахує <strong>токени</strong> (шматочки тексту):
+                ціна = токени вводу × тариф вводу + токени виводу × тариф виводу.
+                <strong> «Думки» моделі (thinking) — це теж вихідні токени</strong>, за них теж платимо.
+                Повторний запит бере відповідь з кешу і коштує <strong>$0</strong>.
+              </p>
+              <table className="evals-tablytsya tsyny-tablytsya">
+                <thead>
+                  <tr><th>Модель</th><th>Вхід / 1M токенів</th><th>Вихід / 1M</th><th>Кеш-вхід / 1M</th></tr>
+                </thead>
+                <tbody>
+                  {stats ? Object.entries(stats.tsiny).map(([nazva, t]) => (
+                    <tr key={nazva}>
+                      <td><code>{nazva}</code></td>
+                      <td>${t.vkhid}</td>
+                      <td>${t.vykhid}</td>
+                      <td>${t.keshVkhid}</td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={4}>Завантаження статистики…</td></tr>
+                  )}
+                </tbody>
+              </table>
+              <p className="evals-prymitka">
+                Джерело: ai.google.dev/gemini-api/docs/pricing (Paid Tier, акційні ціни діють до 31.12.2026).
+                Саме на цьому акаунті доступні лише gemini-3.8-flash, 3.5-flash-lite і 3.1-flash-lite —
+                заощаджуємо через lite-модель, компактний промпт і кеш.
+              </p>
+              {vymirPovidomlennya && <div className="pomylka-inline uspikh">{vymirPovidomlennya}</div>}
+            </section>
+
+            {/* Жива статистика */}
+            {stats && (
+              <section className="blok resultat">
+                <h2>🧮 Лічильник витрат</h2>
+                <div className="vizualizatsiya metryky-vytrat">
+                  <div className="kartka">
+                    <span className="label">Викликів</span>
+                    <span className="znachennya">{stats.zaVse.vykykiv}</span>
+                  </div>
+                  <div className="kartka">
+                    <span className="label">Витрачено всього</span>
+                    <span className="znachennya ocinka">{formatUsd(stats.zaVse.usd)}</span>
+                  </div>
+                  <div className="kartka">
+                    <span className="label">Сер. за виклик</span>
+                    <span className="znachennya">{formatUsd(stats.zaVse.usdSer ?? 0)}</span>
+                  </div>
+                  <div className="kartka">
+                    <span className="label">Сер. час</span>
+                    <span className="znachennya">{Math.round(stats.zaVse.msSer ?? 0)} мс</span>
+                  </div>
+                </div>
+                <div className="vizualizatsiya metryky-vytrat">
+                  <div className="kartka">
+                    <span className="label">Токенів вхід</span>
+                    <span className="znachennya">{stats.zaVse.tokensIn}</span>
+                  </div>
+                  <div className="kartka">
+                    <span className="label">З них «думок»</span>
+                    <span className="znachennya">{stats.zaVse.thoughts}</span>
+                  </div>
+                  <div className="kartka">
+                    <span className="label">Токенів вихід</span>
+                    <span className="znachennya">{stats.zaVse.tokensOut}</span>
+                  </div>
+                  <div className="kartka">
+                    <span className="label">Кеш-хітів (≈ заощаджено)</span>
+                    <span className="znachennya">{stats.zaVse.keshHitiv} 💾 {formatUsd(stats.zaVse.keshEkonomiyaUsd ?? 0)}</span>
+                  </div>
+                </div>
+
+                {stats.zaFicharamy.length > 0 && (
+                  <>
+                    <h3>Розбивка по фічах</h3>
+                    <table className="evals-tablytsya">
+                      <thead>
+                        <tr>
+                          <th>Фіча</th><th>Викликів</th><th>Кеш</th>
+                          <th>Вхід</th><th>Думки</th><th>Вихід</th><th>$</th><th>мс</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stats.zaFicharamy.map((f) => (
+                          <tr key={f.nayva}>
+                            <td><code>{f.nayva}</code></td>
+                            <td>{f.vykykiv}</td>
+                            <td>{f.keshHitiv > 0 ? `💾 ${f.keshHitiv}` : "—"}</td>
+                            <td>{f.tokensIn}</td>
+                            <td>{f.thoughts}</td>
+                            <td>{f.tokensOut}</td>
+                            <td>{formatUsd(f.usd)}</td>
+                            <td>{Math.round(f.ms / Math.max(1, f.vykykiv))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+              </section>
+            )}
+
+            {/* Ліміт витрат */}
+            <section className="blok">
+              <h2>🛡 Ліміт витрат</h2>
+              <p className="agent-info">
+                Захист від перевитрати: якщо витрачено більше ліміту — нові виклики моделі блокуються.
+              </p>
+              {stats && stats.limitUsd != null && stats.limitUsd > 0 && (
+                <>
+                  <div className="limit-strichka-obolonka">
+                    <div
+                      className={`limit-strichka ${stats.zaVse.usd / stats.limitUsd > 0.8 ? "limit-krytychnyi" : ""}`}
+                      style={{ width: `${Math.min(100, (stats.zaVse.usd / stats.limitUsd) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="evals-prymitka">
+                    Витрачено {formatUsd(stats.zaVse.usd)} з ліміту ${stats.limitUsd} ({Math.round((stats.zaVse.usd / stats.limitUsd) * 100)}%)
+                  </p>
+                </>
+              )}
+              <div className="rag-polye">
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={limitInput}
+                  onChange={(e) => setLimitInput(e.target.value)}
+                  placeholder="Ліміт у USD, напр: 1"
+                />
+                <button
+                  className="btn-analyz"
+                  onClick={() => vstanovytyLimitFn(limitInput === "" ? null : Number(limitInput))}
+                >
+                  🛡 Встановити ліміт
+                </button>
+                <button className="btn-analyz btn-b" onClick={() => { setLimitInput(""); vstanovytyLimitFn(null); }}>
+                  ♾ Без ліміту
+                </button>
+              </div>
+              <button className="btn-pryklad" onClick={sklastyLichilnykyFn}>
+                🧹 Скинути лічильники та кеш (для нового експерименту)
+              </button>
+            </section>
+
+            {/* Експеримент */}
+            <section className="blok">
+              <h2>🧪 Експеримент «до / після»</h2>
+              <p className="agent-info">
+                Ті самі <strong>10 evals-кейсів</strong> проходять двічі:
+                <strong> «до»</strong> — базовий шлях (gemini-3.8-flash + повний промпт + типовий thinking),
+                <strong> «після»</strong> — економний (gemini-3.1-flash-lite + компактний промпт + кеш).
+                Якість міряється тим самим автоматичним суддею. ≈1–2 хвилини.
+              </p>
+              <button
+                className="btn-analyz"
+                onClick={zapustytyEksperymentFn}
+                disabled={eksPratsyuye}
+              >
+                {eksPratsyuye ? "⏳ 21 виклик моделі, рахую токени й ціну..." : "🧪 Запустити експеримент (до → після)"}
+              </button>
+            </section>
+
+            {/* Результати експерименту */}
+            {zvitEks && (
+              <>
+                <section className="blok resultat">
+                  <h2>🏆 Было / стало</h2>
+                  <table className="evals-tablytsya">
+                    <thead>
+                      <tr>
+                        <th>Метрика (10 кейсів)</th>
+                        <th>🎯 ДО — 3.8 + повний промпт</th>
+                        <th>⚡ ПІСЛЯ — lite + компакт</th>
+                        <th>Зміна</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Модель</td>
+                        <td><code>{zvitEks.doK.model}</code></td>
+                        <td><code>{zvitEks.pislyaK.model}</code></td>
+                        <td>—</td>
+                      </tr>
+                      <tr>
+                        <td>Токени вхід (сума)</td>
+                        <td>{zvitEks.doK.tokVkhid}</td>
+                        <td>{zvitEks.pislyaK.tokVkhid}</td>
+                        <td className={zvitEks.pislyaK.tokVkhid <= zvitEks.doK.tokVkhid ? "dobre" : "girko"}>
+                          −{skidkaProtsent(zvitEks.doK.tokVkhid, zvitEks.pislyaK.tokVkhid)}%
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>«Думки» thinking (сума)</td>
+                        <td>{zvitEks.doK.tokDumky}</td>
+                        <td>{zvitEks.pislyaK.tokDumky}</td>
+                        <td className={zvitEks.pislyaK.tokDumky <= zvitEks.doK.tokDumky ? "dobre" : "girko"}>
+                          {zvitEks.doK.tokDumky > 0 && zvitEks.pislyaK.tokDumky === 0 ? "−100% 🎉" : `−${skidkaProtsent(zvitEks.doK.tokDumky, zvitEks.pislyaK.tokDumky)}%`}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Токени вихід (сума)</td>
+                        <td>{zvitEks.doK.tokVykhid}</td>
+                        <td>{zvitEks.pislyaK.tokVykhid}</td>
+                        <td className={zvitEks.pislyaK.tokVykhid <= zvitEks.doK.tokVykhid ? "dobre" : "girko"}>
+                          −{skidkaProtsent(zvitEks.doK.tokVykhid, zvitEks.pislyaK.tokVykhid)}%
+                        </td>
+                      </tr>
+                      <tr className="ryadok-hlavne">
+                        <td>💰 Вартість 10 кейсів</td>
+                        <td>{formatUsd(zvitEks.doK.usdSum)}</td>
+                        <td>{formatUsd(zvitEks.pislyaK.usdSum)}</td>
+                        <td className="dobre">×{zvitEks.mnozhnyky.dorozhzheDo.toFixed(1)} дешевше</td>
+                      </tr>
+                      <tr>
+                        <td>💲 Сер. $ за виклик</td>
+                        <td>{formatUsd(zvitEks.doK.usdSer)}</td>
+                        <td>{formatUsd(zvitEks.pislyaK.usdSer)}</td>
+                        <td className="dobre">×{zvitEks.mnozhnyky.dorozhzheDo.toFixed(1)}</td>
+                      </tr>
+                      <tr className="ryadok-hlavne">
+                        <td>⏱ Сер. час відповіді</td>
+                        <td>{(zvitEks.doK.msSer / 1000).toFixed(2)} с</td>
+                        <td>{(zvitEks.pislyaK.msSer / 1000).toFixed(2)} с</td>
+                        <td className="dobre">×{zvitEks.mnozhnyky.povilnishaDo.toFixed(1)} швидше</td>
+                      </tr>
+                      <tr>
+                        <td>✅ Якість (авто-суддя)</td>
+                        <td>{zvitEks.doK.yakistPrOjshlo}/{zvitEks.doK.vsiogo}</td>
+                        <td>{zvitEks.pislyaK.yakistPrOjshlo}/{zvitEks.pislyaK.vsiogo}</td>
+                        <td className={zvitEks.pislyaK.yakistPrOjshlo >= zvitEks.doK.yakistPrOjshlo ? "dobre" : "girko"}>
+                          {zvitEks.pislyaK.yakistPrOjshlo > zvitEks.doK.yakistPrOjshlo
+                            ? `+${zvitEks.pislyaK.yakistPrOjshlo - zvitEks.doK.yakistPrOjshlo} 🎉`
+                            : zvitEks.pislyaK.yakistPrOjshlo === zvitEks.doK.yakistPrOjshlo
+                              ? "не змінилась ✅"
+                              : `−${zvitEks.doK.yakistPrOjshlo - zvitEks.pislyaK.yakistPrOjshlo} ⚠️`}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>💾 Повтор з кешу</td>
+                        <td>—</td>
+                        <td>{formatUsd(zvitEks.kesh.usd)} / {zvitEks.kesh.ms < 1 ? "<1" : Math.round(zvitEks.kesh.ms)} мс</td>
+                        <td className={zvitEks.kesh.keshHit ? "dobre" : "girko"}>
+                          {zvitEks.kesh.keshHit ? "0 токенів ✅" : "кеш не спрацював"}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p className="evals-vysnovok">
+                    {(() => {
+                      const polip = zvitEks.pislyaK.yakistPrOjshlo - zvitEks.doK.yakistPrOjshlo;
+                      const yakistText =
+                        polip > 0
+                          ? ` і якість навіть покращилась: ${zvitEks.doK.yakistPrOjshlo}/${zvitEks.doK.vsiogo} → ${zvitEks.pislyaK.yakistPrOjshlo}/${zvitEks.pislyaK.vsiogo} 🎉`
+                          : polip === 0
+                            ? ` при тій самій якості ${zvitEks.pislyaK.yakistPrOjshlo}/${zvitEks.pislyaK.vsiogo}`
+                            : ` АЛЕ якість впала: ${zvitEks.doK.yakistPrOjshlo} → ${zvitEks.pislyaK.yakistPrOjshlo} ⚠️`;
+                      return `Підсумок: «після» дешевше ×${zvitEks.mnozhnyky.dorozhzheDo.toFixed(1)} і швидше ×${zvitEks.mnozhnyky.povilnishaDo.toFixed(1)}${yakistText}.`;
+                    })()}
+                  </p>
+                </section>
+
+                {/* Деталі по кейсах */}
+                <section className="blok">
+                  <h2>📋 Якість по кожному кейсу</h2>
+                  <table className="evals-tablytsya evals-detali">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Що перевіряємо</th>
+                        <th>🎯 ДО</th>
+                        <th>⚡ ПІСЛЯ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {zvitEks.pryypady.map((p) => (
+                        <tr key={p.id}>
+                          <td>{p.id}</td>
+                          <td>{p.opys}</td>
+                          <td className={p.doProjshov ? "ryadok-dobro" : "ryadok-girko"}>
+                            {p.doProjshov ? "✅" : "❌"}
+                            {!p.doProjshov && p.doPomylky.length > 0 && (
+                              <div className="pomylky-spysok">{p.doPomylky.map((m, i) => <div key={i}>• {m}</div>)}</div>
+                            )}
+                          </td>
+                          <td className={p.pislyaProjshov ? "ryadok-dobro" : "ryadok-girko"}>
+                            {p.pislyaProjshov ? "✅" : "❌"}
+                            {!p.pislyaProjshov && p.pislyaPomylky.length > 0 && (
+                              <div className="pomylky-spysok">{p.pislyaPomylky.map((m, i) => <div key={i}>• {m}</div>)}</div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="evals-prymitka">Порівнюємо ті самі 10 кейсів з вкладки «📊 Evals».</p>
+                </section>
+              </>
             )}
           </>
         )}
