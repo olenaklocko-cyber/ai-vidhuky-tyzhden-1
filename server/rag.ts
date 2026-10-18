@@ -36,14 +36,35 @@ export interface VidpovidPoRag {
 // 1. РОЗБИВКА ДОКУМЕНТІВ НА ШМАТКИ (chunks)
 // ============================================================
 
-/** Читаємо всі .md файли з папки dokumenty */
+/** Читаємо всі .md/.txt файли з папок dokumenty + korystuvatskiDokumenty */
 export function zavantazhytyDokumenty(): { nazva: string; tekst: string }[] {
-  const papka = path.join(__dirname, "dokumenty");
-  const fayly = fs.readdirSync(papka).filter((f) => f.endsWith(".md"));
-  return fayly.map((f) => ({
-    nazva: f,
-    tekst: fs.readFileSync(path.join(papka, f), "utf-8"),
-  }));
+  const papky = ["dokumenty", "korystuvatskiDokumenty"];
+  const dokumenty: { nazva: string; tekst: string }[] = [];
+
+  for (const nazvaPapky of papky) {
+    const papka = path.join(__dirname, nazvaPapky);
+    if (!fs.existsSync(papka)) continue;
+    const fayly = fs.readdirSync(papka).filter((f) => f.endsWith(".md") || f.endsWith(".txt"));
+    for (const f of fayly) {
+      dokumenty.push({
+        nazva: nazvaPapky === "korystuvatskiDokumenty" ? `📄 ${f}` : f,
+        tekst: fs.readFileSync(path.join(papka, f), "utf-8"),
+      });
+    }
+  }
+  return dokumenty;
+}
+
+/** Зберігаємо документ користувача на диск */
+export function zberehtyDokumentKorystuvacha(nazva: string, tekst: string): string {
+  const papka = path.join(__dirname, "korystuvatskiDokumenty");
+  if (!fs.existsSync(papka)) fs.mkdirSync(papka, { recursive: true });
+
+  // Безпечне ім'я файлу: прибираємо небезпечні символи
+  const bezpechnaNazva = nazva.replace(/[^\p{L}\p{N}\w.-]/gu, "_").slice(0, 100);
+  const fayl = path.join(papka, `${bezpechnaNazva}.md`);
+  fs.writeFileSync(fayl, tekst, "utf-8");
+  return fayl;
 }
 
 /**
@@ -137,6 +158,12 @@ export class VektorBaza {
       }))
       .sort((a, b) => b.skhizhnist - a.skhizhnist)
       .slice(0, kilkist);
+  }
+
+  /** Очищаємо базу (щоб перезавантаження не дублювало шматки) */
+  ochystyty(): void {
+    this.shmatky = [];
+    this.nastupnyyId = 0;
   }
 
   /** Скільки шматків у базі */

@@ -85,6 +85,12 @@ function App() {
   const [ragZavantazhennya, setRagZavantazhennya] = useState(false);
   const [ragShukayemo, setRagShukayemo] = useState(false);
 
+  // === Стан для своїх документів ===
+  const [myDocNazva, setMyDocNazva] = useState("");
+  const [myDocTekst, setMyDocTekst] = useState("");
+  const [myDocDodalennya, setMyDocDodalennya] = useState(false);
+  const [myDocPovidomlennya, setMyDocPovidomlennya] = useState("");
+
   // === Стан для Агента ===
   const [agentZapyt, setAgentZapyt] = useState("");
   const [agentVidpovid, setAgentVidpovid] = useState<VidpovidAgenta | null>(null);
@@ -140,6 +146,46 @@ function App() {
     } finally { setRagZavantazhennya(false); }
   };
 
+  // === RAG: свої документи ===
+  const zavantazhytySviyFayl = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fayl = e.target.files?.[0];
+    if (!fayl) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMyDocTekst(reader.result as string);
+      // Підставляємо ім'я файлу без розширення як назву документа
+      if (!myDocNazva) setMyDocNazva(fayl.name.replace(/\.(md|txt)$/i, ""));
+      setMyDocPovidomlennya("");
+    };
+    reader.readAsText(fayl);
+  };
+
+  const dodatySviyDocument = async () => {
+    if (myDocNazva.trim().length < 2 || myDocTekst.trim().length < 20) return;
+    setMyDocDodalennya(true);
+    setMyDocPovidomlennya("");
+    setRagPomylka("");
+    try {
+      const res = await fetch("http://localhost:3001/api/rag/dodaty", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nazva: myDocNazva, tekst: myDocTekst }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setRagPomylka(data.pomylka || "Помилка"); return; }
+      setMyDocPovidomlennya(`✅ Додано «${data.nazva}» — ${data.shmatkivDodano} шматків (усього у базі: ${data.vseShmatkiv})`);
+      setMyDocNazva("");
+      setMyDocTekst("");
+      // Оновлюємо статус бази
+      const status = await fetch("http://localhost:3001/api/rag/status").then((r) => r.json());
+      setRagStatus(status);
+    } catch {
+      setRagPomylka("Сервер не відповідає");
+    } finally {
+      setMyDocDodalennya(false);
+    }
+  };
+
   // === RAG: запитання ===
   const postavytyZapyt = async () => {
     if (ragZapyt.trim().length < 5) return;
@@ -186,7 +232,6 @@ function App() {
     if (!fayl) return;
     const reader = new FileReader();
     reader.onload = () => {
-      const base64 = (reader.result as string).split(",")[1];
       setKartynka(reader.result as string);
       setKartynkaMime(fayl.type);
       setVisionOpys("");
@@ -396,6 +441,41 @@ function App() {
               <button className="btn-analyz" onClick={zavantazhytyDokumenty} disabled={ragZavantazhennya}>
                 {ragZavantazhennya ? "⏳ Обчислюю ембеддинги..." : ragStatus ? "🔄 Перезавантажити документи" : "📦 Завантажити документи"}
               </button>
+            </section>
+
+            {/* Свої документи */}
+            <section className="blok">
+              <h2>📁 Додати свій документ</h2>
+              <p className="agent-info">
+                Завантажте файл (.md або .txt) або вставте текст — і AI відповідатиме і по ньому теж.
+              </p>
+              <input
+                type="text"
+                value={myDocNazva}
+                onChange={(e) => setMyDocNazva(e.target.value)}
+                placeholder="Назва документа (напр: Мої нотатки про подорожі)"
+                className="doc-nazva"
+              />
+              <label className="zavantazhennya-faylu">
+                <input type="file" accept=".md,.txt" onChange={zavantazhytySviyFayl} />
+                <div className="pole-zavantazhennya-doc">
+                  {myDocTekst ? `📄 ${myDocTekst.length} символів завантажено` : "📁 Оберіть .md або .txt файл (або вставте текст нижче)"}
+                </div>
+              </label>
+              <textarea
+                value={myDocTekst}
+                onChange={(e) => setMyDocTekst(e.target.value)}
+                placeholder="…або вставте текст документа сюди"
+                rows={4}
+              />
+              <button
+                className="btn-analyz"
+                onClick={dodatySviyDocument}
+                disabled={myDocDodalennya || myDocNazva.trim().length < 2 || myDocTekst.trim().length < 20}
+              >
+                {myDocDodalennya ? "⏳ Розбиваю на шматки + рахую ембеддинги..." : "➕ Додати документ у базу"}
+              </button>
+              {myDocPovidomlennya && <div className="pomylka-inline uspikh">{myDocPovidomlennya}</div>}
             </section>
 
             {/* Запитання */}

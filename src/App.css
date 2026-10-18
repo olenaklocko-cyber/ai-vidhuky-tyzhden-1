@@ -493,3 +493,49 @@ textarea:focus {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
 }
+
+/* === Свої документи (RAG) === */
+.doc-nazva {
+  width: 100%;
+  padding: 10px 14px;
+  border: 2px solid #d9d9d9;
+  border-radius: 8px;
+  font-size: 15px;
+  margin-bottom: 12px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.doc-nazva:focus {
+  outline: none;
+  border-color: #722ed1;
+}
+
+.zavantazhennya-faylu {
+  display: block;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.zavantazhennya-faylu input[type="file"] {
+  display: none;
+}
+
+.pole-zavantazhennya-doc {
+  border: 2px dashed #b37feb;
+  border-radius: 8px;
+  padding: 18px;
+  text-align: center;
+  color: #722ed1;
+  background: #f9f0ff;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.zavantazhennya-faylu:hover .pole-zavantazhennya-doc {
+  background: #efdbff;
+}
+
+.uspikh {
+  color: #52c41a !important;
+}

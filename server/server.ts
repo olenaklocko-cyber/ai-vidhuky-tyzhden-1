@@ -138,7 +138,7 @@ function provalyuvaty(tekst: string): { ok: true; data: Analiz } | { ok: false; 
 // ============================================================
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 /** POST /api/analiz — головний ендпоінт */
 app.post("/api/analiz", async (req, res) => {
@@ -210,7 +210,7 @@ app.get("/api/zdorovya", (_req, res) => {
 // ============================================================
 // RAG: завантаження документів + пошук + відповідь
 // ============================================================
-import { zavantazhytyDokumenty, VektorBaza, vidpovistyPoRag } from "./rag.js";
+import { zavantazhytyDokumenty, VektorBaza, vidpovistyPoRag, zberehtyDokumentKorystuvacha } from "./rag.js";
 
 const vektorBaza = new VektorBaza();
 
@@ -219,6 +219,9 @@ app.post("/api/rag/zavantazhyty", async (_req, res) => {
   try {
     const dokumenty = zavantazhytyDokumenty();
     let vseShmatky = 0;
+
+    // Очищаємо базу перед перезавантаженням, щоб не було дублікатів
+    vektorBaza.ochystyty();
 
     for (const doc of dokumenty) {
       const kilkist = await vektorBaza.dodatyDokument(doc.nazva, doc.tekst);
@@ -233,6 +236,38 @@ app.post("/api/rag/zavantazhyty", async (_req, res) => {
   } catch (e) {
     res.status(500).json({
       pomylka: e instanceof Error ? e.message : "Помилка завантаження",
+    });
+  }
+});
+
+/** POST /api/rag/dodaty — додаємо документ користувача (текст + назва) */
+app.post("/api/rag/dodaty", async (req, res) => {
+  const { nazva, tekst } = req.body as { nazva?: string; tekst?: string };
+
+  if (!nazva || nazva.trim().length < 2) {
+    return res.status(400).json({ pomylka: "Вкажіть назву документа (мінімум 2 символи)" });
+  }
+  if (!tekst || tekst.trim().length < 20) {
+    return res.status(400).json({ pomylka: "Документ має містити мінімум 20 символів" });
+  }
+
+  try {
+    // 1. Зберігаємо файл на диск (щоб не загубився після перезапуску)
+    zberehtyDokumentKorystuvacha(nazva.trim(), tekst);
+
+    // 2. Додаємо у векторну базу (рядок "📄 назва.md" — щоб відрізняти свої від базових)
+    const nazvaVDokumentakh = `📄 ${nazva.trim()}.md`;
+    const kilkist = await vektorBaza.dodatyDokument(nazvaVDokumentakh, tekst);
+
+    res.json({
+      ok: true,
+      shmatkivDodano: kilkist,
+      vseShmatkiv: vektorBaza.kilkistShmatkiv,
+      nazva: nazvaVDokumentakh,
+    });
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка додавання документа",
     });
   }
 });
