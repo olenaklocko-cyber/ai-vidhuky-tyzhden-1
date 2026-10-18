@@ -297,6 +297,80 @@ app.post("/api/agent", async (req, res) => {
   }
 });
 
+// ============================================================
+// ТИЖДЕНЬ 4: КАРТИНКИ (vision) + СТРІМІНГ
+// ============================================================
+import { opysatyKartynku, strimityVidpovid, strimityZKartynkoyu } from "./vision.js";
+
+/** POST /api/vision — описати картинку */
+app.post("/api/vision", async (req, res) => {
+  const { base64, mime, zapyt } = req.body as {
+    base64?: string;
+    mime?: string;
+    zapyt?: string;
+  };
+
+  if (!base64 || !mime) {
+    return res.status(400).json({ pomylka: "Потрібна картинка (base64 + mime)" });
+  }
+
+  try {
+    const zapytText = zapyt || `Опиши цю картинку українською. Бути конкретним:
+- Що зображено (об'єкти, люди, місце)?
+- Який колір/настрій?
+- Цікаві деталі?
+Відповідай стисло, 3-5 речень.`;
+
+    const opys = await opysatyKartynku(base64, mime);
+    res.json({ opys });
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка vision",
+    });
+  }
+});
+
+/** POST /api/strim — стримінг відповіді (SSE) */
+app.post("/api/strim", async (req, res) => {
+  const { zapyt, base64, mime } = req.body as {
+    zapyt?: string;
+    base64?: string;
+    mime?: string;
+  };
+
+  if (!zapyt || zapyt.trim().length < 3) {
+    return res.status(400).json({ pomylka: "Потрібен запит" });
+  }
+
+  // Налаштовуємо SSE
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  try {
+    let vsiaVidpovid: string;
+
+    if (base64 && mime) {
+      // Стримінг з картинкою
+      vsiaVidpovid = await strimityZKartynkoyu(base64, mime, zapyt, (chunk) => {
+        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      });
+    } else {
+      // Звичайний стримінг
+      vsiaVidpovid = await strimityVidpovid(zapyt, (chunk) => {
+        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      });
+    }
+
+    // Кінець стріму
+    res.write(`data: ${JSON.stringify({ done: true, vsiaVidpovid })}\n\n`);
+    res.end();
+  } catch (e) {
+    res.write(`data: ${JSON.stringify({ pomylka: e instanceof Error ? e.message : "Помилка" })}\n\n`);
+    res.end();
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Сервер працює на http://localhost:${PORT}`);
 });

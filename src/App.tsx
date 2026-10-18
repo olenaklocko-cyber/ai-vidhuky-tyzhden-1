@@ -55,6 +55,12 @@ const PRYKLADY_ZAPYTIV_AGENT = [
   "Обчисли (25 * 4 + 100) / 3 і поясни що вийшло",
 ];
 
+const PRYKLADY_ZAPYTIV_STRIM = [
+  "Розкажи цікавий факт про космос",
+  "Що таке штучний інтелект?",
+  "Як працює нейромережа?",
+];
+
 const TONALNIST_KOLIR: Record<string, string> = {
   позитивна: "#52c41a",
   негативна: "#ff4d4f",
@@ -63,7 +69,7 @@ const TONALNIST_KOLIR: Record<string, string> = {
 };
 
 function App() {
-  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent">("analiz");
+  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent" | "vision">("analiz");
 
   // === Стан для аналізу відгуків ===
   const [vidhuk, setVidhuk] = useState("");
@@ -84,6 +90,18 @@ function App() {
   const [agentVidpovid, setAgentVidpovid] = useState<VidpovidAgenta | null>(null);
   const [agentPomylka, setAgentPomylka] = useState("");
   const [agentPratsyuye, setAgentPratsyuye] = useState(false);
+
+  // === Стан для Vision + Стріму ===
+  const [kartynka, setKartynka] = useState<string | null>(null);
+  const [kartynkaMime, setKartynkaMime] = useState("");
+  const [visionOpys, setVisionOpys] = useState("");
+  const [visionPomylka, setVisionPomylka] = useState("");
+  const [visionOpysuye, setVisionOpysuye] = useState(false);
+
+  const [strimZapyt, setStrimZapyt] = useState("");
+  const [strimTekst, setStrimTekst] = useState("");
+  const [strimPratsyuye, setStrimPratsyuye] = useState(false);
+  const [strimPomylka, setStrimPomylka] = useState("");
 
   const analyzuvaty = async () => {
     if (vidhuk.trim().length < 10) {
@@ -162,6 +180,96 @@ function App() {
     } finally { setAgentPratsyuye(false); }
   };
 
+  // === Vision: завантажити картинку ===
+  const zavantazhytyKartynku = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fayl = e.target.files?.[0];
+    if (!fayl) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      setKartynka(reader.result as string);
+      setKartynkaMime(fayl.type);
+      setVisionOpys("");
+      setVisionPomylka("");
+    };
+    reader.readAsDataURL(fayl);
+  };
+
+  // === Vision: описати картинку ===
+  const opysatyKartynkuFn = async () => {
+    if (!kartynka || !kartynkaMime) return;
+    setVisionOpysuye(true);
+    setVisionOpys("");
+    setVisionPomylka("");
+    try {
+      const base64 = kartynka.split(",")[1];
+      const res = await fetch("http://localhost:3001/api/vision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64, mime: kartynkaMime }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setVisionPomylka(data.pomylka || "Помилка"); return; }
+      setVisionOpys(data.opys);
+    } catch {
+      setVisionPomylka("Сервер не відповідає");
+    } finally { setVisionOpysuye(false); }
+  };
+
+  // === Стрімінг ===
+  const strimyty = async () => {
+    if (strimZapyt.trim().length < 3) return;
+    setStrimPratsyuye(true);
+    setStrimTekst("");
+    setStrimPomylka("");
+
+    try {
+      const res = await fetch("http://localhost:3001/api/strim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zapyt: strimZapyt }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        setStrimPomylka(data.pomylka || "Помилка");
+        return;
+      }
+
+      // Читаємо SSE потік
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = JSON.parse(line.slice(6));
+              if (data.chunk) {
+                setStrimTekst((prev) => prev + data.chunk);
+              }
+              if (data.pomylka) {
+                setStrimPomylka(data.pomylka);
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      setStrimPomylka("Помилка з'єднання");
+    } finally {
+      setStrimPratsyuye(false);
+    }
+  };
+
   return (
     <div className="app">
       <header className="shapka">
@@ -187,6 +295,12 @@ function App() {
             onClick={() => setVkladka("agent")}
           >
             🛠 Агент
+          </button>
+          <button
+            className={`vkladka ${vkladka === "vision" ? "aktyvna" : ""}`}
+            onClick={() => setVkladka("vision")}
+          >
+            🎨 Картинки + Стрім
           </button>
         </div>
       </header>
@@ -426,6 +540,88 @@ function App() {
                 </section>
               </>
             )}
+          </>
+        )}
+
+        {/* ============ ВКЛАДКА 4: КАРТИНКИ + СТРІМ ============ */}
+        {vkladka === "vision" && (
+          <>
+            {/* Завантаження картинки */}
+            <section className="blok vision-blok">
+              <h2>🎨 Завантажте картинку</h2>
+              <p className="agent-info">AI опише що на ній зображено (vision / мультимодальність)</p>
+
+              <label className="zavantazhennya-kartynky">
+                <input type="file" accept="image/*" onChange={zavantazhytyKartynku} />
+                {kartynka ? (
+                  <img src={kartynka} alt="Завантажена" className="preview-kartynky" />
+                ) : (
+                  <div className="pole-zavantazhennya">📁 Натисніть або перетягніть картинку</div>
+                )}
+              </label>
+
+              {kartynka && (
+                <button
+                  className="btn-analyz"
+                  onClick={opysatyKartynkuFn}
+                  disabled={visionOpysuye}
+                >
+                  {visionOpysuye ? "👁 Описую..." : "👁 Описати картинку"}
+                </button>
+              )}
+
+              {visionPomylka && (
+                <div className="pomylka-inline">❌ {visionPomylka}</div>
+              )}
+
+              {visionOpys && (
+                <div className="vision-opys">
+                  <h3>📖 Опис:</h3>
+                  <p>{visionOpys}</p>
+                </div>
+              )}
+            </section>
+
+            {/* Стрімінг */}
+            <section className="blok strim-blok">
+              <h2>⚡ Стрімінг відповіді</h2>
+              <p className="agent-info">Відповідь з'являється поступово, слово за словом (SSE)</p>
+
+              <div className="rag-polye">
+                <input
+                  type="text"
+                  value={strimZapyt}
+                  onChange={(e) => setStrimZapyt(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && strimyty()}
+                  placeholder="Наприклад: Розкажи цікавий факт про космос"
+                />
+                <button
+                  className="btn-analyz"
+                  onClick={strimyty}
+                  disabled={strimPratsyuye || strimZapyt.trim().length < 3}
+                >
+                  {strimPratsyuye ? "⚡ Друкується..." : "⚡ Запустити стрім"}
+                </button>
+              </div>
+
+              <div className="prykaldy">
+                <span>Приклади:</span>
+                {PRYKLADY_ZAPYTIV_STRIM.map((p, i) => (
+                  <button key={i} onClick={() => setStrimZapyt(p)} className="btn-pryklad">#{i + 1}</button>
+                ))}
+              </div>
+
+              {strimPomylka && (
+                <div className="pomylka-inline">❌ {strimPomylka}</div>
+              )}
+
+              {strimTekst && (
+                <div className="strim-tekst">
+                  {strimTekst}
+                  {strimPratsyuye && <span className="kurсор">▊</span>}
+                </div>
+              )}
+            </section>
           </>
         )}
       </main>

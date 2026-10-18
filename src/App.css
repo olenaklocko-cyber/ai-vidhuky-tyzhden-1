@@ -406,3 +406,90 @@ textarea:focus {
 .agent-tools {
   margin-top: 16px;
 }
+
+/* ============ VISION + СТРІМ ============ */
+.vision-blok {
+  border-left: 4px solid #eb2f96;
+}
+
+.strim-blok {
+  border-left: 4px solid #13c2c2;
+}
+
+.zavantazhennya-kartynky {
+  display: block;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+
+.zavantazhennya-kartynky input {
+  display: none;
+}
+
+.pole-zavantazhennya {
+  border: 2px dashed #d9d9d9;
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  color: #888;
+  font-size: 15px;
+  transition: border-color 0.2s;
+}
+
+.zavantazhennya-kartynky:hover .pole-zavantazhennya {
+  border-color: #eb2f96;
+}
+
+.preview-kartynky {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  border: 2px solid #eb2f96;
+}
+
+.vision-opys {
+  margin-top: 16px;
+  background: #fdf0f6;
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.vision-opys h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+  color: #eb2f96;
+}
+
+.vision-opys p {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.pomylka-inline {
+  margin-top: 12px;
+  color: #ff4d4f;
+  font-size: 14px;
+}
+
+.strim-tekst {
+  margin-top: 16px;
+  background: #f0fdfa;
+  padding: 16px;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  min-height: 60px;
+  border-left: 3px solid #13c2c2;
+}
+
+.kurсор {
+  animation: blink 1s infinite;
+  color: #13c2c2;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
