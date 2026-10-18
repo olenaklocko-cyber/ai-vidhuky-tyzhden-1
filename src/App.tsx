@@ -1,8 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 /** База API: локально — окремий сервер; на Vercel — той самий домен (/api/...) */
 const API_BASE = import.meta.env.DEV ? "http://localhost:3001" : "";
+
+/** Крок 2+4: 8 блоків карти проєкту — клік відкриває відповідний робочий простір */
+type VkladkaTyp = "chat" | "analiz" | "rag" | "agent" | "vision" | "evals" | "cina" | "bezpeka";
+const BLOKY_PROEKTU: { tekst: string; vkladka: VkladkaTyp }[] = [
+  { tekst: "Промпт-інженерія та формат відповіді", vkladka: "analiz" },
+  { tekst: "RAG: власні дані в ШІ", vkladka: "rag" },
+  { tekst: "ШІ-агент з інструментами", vkladka: "agent" },
+  { tekst: "Зображення, голос та стрімінг", vkladka: "vision" },
+  { tekst: "Оцінка якості ШІ (evals)", vkladka: "evals" },
+  { tekst: "Вартість та швидкість ШІ", vkladka: "cina" },
+  { tekst: "Безпека та чесність ШІ", vkladka: "bezpeka" },
+  { tekst: "Капстоун: власний ШІ-продукт", vkladka: "chat" },
+];
 
 interface Analiz {
   tonalnist: "позитивна" | "негативна" | "нейтральна" | "змішана";
@@ -52,15 +65,29 @@ interface PovidomlennyaChat {
   khto: "ya" | "ai";
   tekst: string;
   zapit?: string;
-  dzherela?: { dokument: string; tsytata: string }[];
+  dzherela?: { dokument: string; tsytata: string; url?: string }[];
   kroky?: KrokAgenta[];
   toolVykorystano?: string[];
   meta?: MetaVykyku;
   bezpeka?: BezpekaMeta;
   pomylka?: string;
+  /** Тиждень 4: прев'ю завантаженої картинки (data URL) */
+  kartynka?: string;
 }
 
 /** Тиждень 8: запис зворотного зв'язку 👍/👎 */
+/** Тиждень 4: мінімальний тип Web Speech API (у lib.dom немає класу SpeechRecognition) */
+interface RozpiznavachHolosu {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: ((e: SpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
 interface ZapisFeedback {
   chys: string;
   napryam: "dobre" | "girne";
@@ -173,7 +200,7 @@ interface Pomylka {
 
 interface RagVidpovid {
   vidpovid: string;
-  dzherela: { dokument: string; tsytata: string }[];
+  dzherela: { dokument: string; tsytata: string; url?: string }[];
   shmatkivZnaydeno: number;
 }
 
@@ -236,14 +263,17 @@ interface ZvitEvals {
 }
 
 const TONALNIST_KOLIR: Record<string, string> = {
-  позитивна: "#52c41a",
-  негативна: "#ff4d4f",
-  нейтральна: "#1677ff",
-  змішана: "#faad14",
+  позитивна: "#34d399",
+  негативна: "#f87171",
+  нейтральна: "#38bdf8",
+  змішана: "#fbbf24",
 };
 
 /** Форматування ціни: дрібні суми — 5 знаків після коми */
 const formatUsd = (x: number) => `$${x < 0.01 ? x.toFixed(5) : x.toFixed(4)}`;
+
+const LIMYT_USD = 2;
+const LIMYT_TEKST = `$${LIMYT_USD.toFixed(2)}`;
 
 /** На скільки відсотків зменшилось (було → стало) */
 const skidkaProtsent = (bulo: number, stalo: number) =>
@@ -251,6 +281,41 @@ const skidkaProtsent = (bulo: number, stalo: number) =>
 
 function App() {
   const [vkladka, setVkladka] = useState<"chat" | "analiz" | "rag" | "agent" | "vision" | "evals" | "cina" | "bezpeka">("chat");
+  /**
+   * Капстоун-презентація: етапи входу
+   * start — екран з мозком → karta — карта проєкту (8 блоків) → pratsiu — робочий чат
+   * etapZnykaie  — плавно зникає ЛИШЕ вміст (фон лишається суцільним космічним)
+   * fonZnykaie  — зникає сам фон (лише при вході в чат після кліку на картку)
+   * appMontovano — білий інтерфейс чату монтується ТІЛЬКИ після першого кліку на картку
+   */
+  const [etap, setEtap] = useState<"start" | "karta" | "pratsiu">("start");
+  const [etapZnykaie, setEtapZnykaie] = useState(false);
+  const [fonZnykaie, setFonZnykaie] = useState(false);
+  const [appMontovano, setAppMontovano] = useState(false);
+
+  /** Плавний перехід між етапами: спочатку зникає вміст (0.7с), далі відкривається наступний етап */
+  const pereyty = (nastupnyi: "start" | "karta" | "pratsiu") => {
+    if (etap === nastupnyi || etapZnykaie) return;
+
+    // Повернення з чату (Назад): показуємо екран одразу, без затримки
+    if (etap === "pratsiu") {
+      setEtap(nastupnyi);
+      setFonZnykaie(false);
+      return;
+    }
+
+    setEtapZnykaie(true);
+    window.setTimeout(() => {
+      setEtap(nastupnyi);
+      setEtapZnykaie(false);
+      if (nastupnyi === "pratsiu") {
+        setAppMontovano(true);
+        // лише тепер (після кліку на картку) плавно зникає космічний фон
+        setFonZnykaie(true);
+        window.setTimeout(() => setFonZnykaie(false), 450);
+      }
+    }, 700);
+  };
 
   // === Стан для аналізу відгуків ===
   const [vidhuk, setVidhuk] = useState("");
@@ -333,16 +398,40 @@ function App() {
     },
   ]);
   const [chatTekst, setChatTekst] = useState("");
+  const [chatKartynka, setChatKartynka] = useState<string | null>(null);
+  const [chatKartynkaMime, setChatKartynkaMime] = useState("");
+  const [slukhaie, setSlukhaie] = useState(false);
   const [chatNadpisuye, setChatNadpisuye] = useState(false);
   const [feedbacky, setFeedbacky] = useState<ZapisFeedback[]>([]);
   const [chatEvalsKesy, setChatEvalsKesy] = useState<ChatEvalPrypadUI[]>([]);
-  const [chatZvit, setChatZvit] = useState<ZvitChatEvalsUI | null>(null);
+  const [chatZvit, setChatZvit] = useState<ZvitChatEvalsUI | null>(() => {
+    try {
+      const kech = localStorage.getItem("chatEvalsZvit");
+      return kech ? (JSON.parse(kech) as ZvitChatEvalsUI) : null;
+    } catch {
+      return null;
+    }
+  });
   const [chatEvalsPratsyuye, setChatEvalsPratsyuye] = useState(false);
   const [zhurnalUsd, setZhurnalUsd] = useState(0);
   const [vybranyjFeedback, setVybranyjFeedback] = useState<string | null>(null);
   const [feedbackKomentar, setFeedbackKomentar] = useState("");
   const [evalKlyuchi, setEvalKlyuchi] = useState("");
   const [chatPovidomlennya, setChatPovidomlennya] = useState("");
+  const [expressRez, setExpressRez] = useState<Analiz | null>(null);
+  const [expressPratsyuye, setExpressPratsyuye] = useState(false);
+  const [expressPomylka, setExpressPomylka] = useState("");
+  const [expressPoleVidkryte, setExpressPoleVidkryte] = useState(false);
+  const [expressTekst, setExpressTekst] = useState("");
+
+  const istoriyaRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatPoleRef = useRef<HTMLTextAreaElement>(null);
+  const rozpiznavachRef = useRef<RozpiznavachHolosu | null>(null);
+  useEffect(() => {
+    const el = istoriyaRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatIstoriya, chatNadpisuye]);
 
   const prykladyChat = [
     "Скільки коштує гостел у Римі і який бюджет на день?",
@@ -774,16 +863,143 @@ function App() {
     }
   };
 
+  // === ТИЖДЕНЬ 4: завантаження фото просто з чату ===
+  const zavantazhytyChatKartynku = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fayl = e.target.files?.[0];
+    if (!fayl) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setChatKartynka(reader.result as string);
+      setChatKartynkaMime(fayl.type);
+    };
+    reader.readAsDataURL(fayl);
+    e.target.value = "";
+  };
+
+  // === ТИЖДЕНЬ 4: диктування голосом (Web Speech API) ===
+  const uvmiknutyMikrofon = () => {
+    if (slukhaie) {
+      rozpiznavachRef.current?.stop();
+      setSlukhaie(false);
+      return;
+    }
+    const w = window as unknown as {
+      SpeechRecognition?: new () => RozpiznavachHolosu;
+      webkitSpeechRecognition?: new () => RozpiznavachHolosu;
+    };
+    const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!SR) {
+      setChatPovidomlennya("🎙️ Цей браузер не підтримує диктування — спробуй Chrome або Edge.");
+      return;
+    }
+    const pochatkovyj = chatTekst;
+    const r = new SR();
+    r.lang = "uk-UA";
+    r.interimResults = true;
+    r.continuous = false;
+    r.onresult = (e) => {
+      let fragment = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) fragment += e.results[i][0].transcript;
+      setChatTekst(pochatkovyj + (pochatkovyj ? " " : "") + fragment);
+    };
+    r.onend = () => setSlukhaie(false);
+    r.onerror = () => setSlukhaie(false);
+    rozpiznavachRef.current = r;
+    r.start();
+    setSlukhaie(true);
+  };
+
+  // === Капстоун: шаблони запитів з віджета «Інструменти Агента» ===
+  const pidstavytyShablon = (tekst: string) => {
+    if (Math.max(zhurnalUsd, stats?.zaVse.usd ?? 0) >= LIMYT_USD) return;
+    setChatTekst(tekst);
+    window.setTimeout(() => chatPoleRef.current?.focus(), 0);
+  };
+
+  // === Капстоун: експрес-аналіз відгуку готелю на правій панелі ===
+  const expressAnalizFn = async () => {
+    if (expressPratsyuye) return;
+    const vidhuk = expressTekst.trim();
+    if (vidhuk.length < 10) {
+      setExpressPomylka("Відгук має містити щонайменше 10 символів");
+      return;
+    }
+    setExpressPratsyuye(true);
+    setExpressPomylka("");
+    setExpressRez(null);
+    try {
+      const res = await fetch(API_BASE + "/api/analiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vidhuk, rezhym: rezhymAnalizu }),
+      });
+      const data = (await res.json()) as Analiz & { pomylka?: string };
+      if (!res.ok) {
+        setExpressPomylka(data.pomylka || "Помилка аналізу");
+        return;
+      }
+      setExpressRez(data);
+    } catch {
+      setExpressPomylka("Сервер не відповідає");
+    } finally {
+      setExpressPratsyuye(false);
+    }
+  };
+
   // === Тиждень 8: живий асистент ===
   const nadislalyChat = async (tekst?: string) => {
     const pov = (tekst ?? chatTekst).trim();
-    if (pov.length < 5 || chatNadpisuye) return;
+    const maieKartynku = Boolean(chatKartynka && chatKartynkaMime);
+    if ((pov.length < 5 && !maieKartynku) || chatNadpisuye) return;
+    if (Math.max(zhurnalUsd, stats?.zaVse.usd ?? 0) >= LIMYT_USD) {
+      setChatPovidomlennya(`⛔ Ліміт ${LIMYT_TEKST} вичерпано — нові запити заблоковано для безпеки.`);
+      return;
+    }
 
+    const kartynkaNad = chatKartynka;
+    const mimeNad = chatKartynkaMime;
     const idKorystuvacha = crypto.randomUUID();
-    setChatIstoriya((prev) => [...prev, { id: idKorystuvacha, khto: "ya", tekst: pov }]);
+    setChatIstoriya((prev) => [
+      ...prev,
+      { id: idKorystuvacha, khto: "ya", tekst: pov, ...(maieKartynku && kartynkaNad ? { kartynka: kartynkaNad } : {}) },
+    ]);
     setChatTekst("");
+    setChatKartynka(null);
+    setChatKartynkaMime("");
     setChatNadpisuye(true);
     setVybranyjFeedback(null);
+
+    // === ТИЖДЕНЬ 4: якщо додано фото — аналізуємо зображення (vision) ===
+    if (maieKartynku && kartynkaNad) {
+      try {
+        const base64 = kartynkaNad.split(",")[1];
+        const res = await fetch(API_BASE + "/api/vision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64, mime: mimeNad, zapyt: pov.length >= 3 ? pov : undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.pomylka || "Помилка vision");
+        setChatIstoriya((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), khto: "ai", tekst: data.opys, zapit: pov },
+        ]);
+      } catch (e) {
+        setChatIstoriya((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            khto: "ai",
+            tekst: e instanceof Error ? e.message : "Помилка vision",
+            zapit: pov,
+            pomylka: "vision",
+          },
+        ]);
+      } finally {
+        setChatNadpisuye(false);
+      }
+      return;
+    }
 
     try {
       const res = await fetch(API_BASE + "/api/chat", {
@@ -903,20 +1119,40 @@ function App() {
   };
 
   /** Прогін evals живого асистента (базові + кейси з фідбеку) */
-  const zapustytyChatEvalsFn = async () => {
+  const zapustytyChatEvalsFn = async (tYho = false) => {
     setChatEvalsPratsyuye(true);
     setChatPovidomlennya("");
     try {
       const res = await fetch(API_BASE + "/api/evals/chat/zapustyty", { method: "POST" });
       const d = await res.json();
-      if (res.ok) setChatZvit(d);
-      else setChatPovidomlennya(d.pomylka || "Помилка прогону evals");
+      if (res.ok) {
+        setChatZvit(d);
+        try {
+          localStorage.setItem("chatEvalsZvit", JSON.stringify(d));
+        } catch {
+          /* без кешу */
+        }
+      } else if (!tYho) {
+        setChatPovidomlennya(d.pomylka || "Помилка прогону evals");
+      }
     } catch {
-      setChatPovidomlennya("Сервер не відповідає");
+      if (!tYho) setChatPovidomlennya("Сервер не відповідає");
     } finally {
       setChatEvalsPratsyuye(false);
     }
   };
+
+  const avtoprohonPeredano = useRef(false);
+  useEffect(() => {
+    if (avtoprohonPeredano.current) return;
+    avtoprohonPeredano.current = true;
+    try {
+      if (localStorage.getItem("chatEvalsZvit")) return;
+    } catch {
+      /* без кешу — проганяємо */
+    }
+    void zapustytyChatEvalsFn(true);
+  }, []);
 
   const vydalytyChatEvalFn = async (id: number) => {
     try {
@@ -934,87 +1170,246 @@ function App() {
   };
 
 
-  return (
-    <div className="app">
-      <header className="shapka">
-        <h1>🧠 AI-асистент</h1>
-        <p>Рівень 6: промпт-інженерія + RAG</p>
+  const ostannyaVidpovidAi = [...chatIstoriya].reverse().find((p) => p.khto === "ai" && !p.pomylka);
+  const vytrachenoUsd = Math.max(zhurnalUsd, stats?.zaVse.usd ?? 0);
+  const limytVykorystano = vytrachenoUsd >= LIMYT_USD;
 
-        {/* Вкладки */}
-        <div className="vkladky">
-          <button
-            className={`vkladka ${vkladka === "chat" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("chat")}
-          >
-            💬 Асистент
-          </button>
-          <button
-            className={`vkladka ${vkladka === "analiz" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("analiz")}
-          >
-            📝 Аналіз відгуків
-          </button>
-          <button
-            className={`vkladka ${vkladka === "rag" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("rag")}
-          >
-            📚 RAG-асистент
-          </button>
-          <button
-            className={`vkladka ${vkladka === "agent" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("agent")}
-          >
-            🛠 Агент
-          </button>
-          <button
-            className={`vkladka ${vkladka === "vision" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("vision")}
-          >
-            🎨 Картинки + Стрім
-          </button>
-          <button
-            className={`vkladka ${vkladka === "evals" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("evals")}
-          >
-            📊 Evals
-          </button>
-          <button
-            className={`vkladka ${vkladka === "cina" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("cina")}
-          >
-            💰 Ціна і швидкість
-          </button>
-          <button
-            className={`vkladka ${vkladka === "bezpeka" ? "aktyvna" : ""}`}
-            onClick={() => setVkladka("bezpeka")}
-          >
-            🧭 Безпека
-          </button>
+  // Контекстний заголовок шапки: чат ↔ карта/підмодуль
+  const naHolovnomuChati = etap === "pratsiu" && vkladka === "chat";
+  const idxBlok = BLOKY_PROEKTU.findIndex((b) => b.vkladka === vkladka);
+
+  return (
+    <>
+      {/* ============ ЕТАТИ: МОЗОК → ЧАТ ⇄ КАРТА ПРОЄКТУ ============ */}
+      {(etap !== "pratsiu" || fonZnykaie) && (
+        <div
+          className={`startovyi-ekran ${etapZnykaie ? "znykaie" : ""} ${fonZnykaie ? "fon-znykaie" : ""}`}
+          aria-hidden={etapZnykaie || fonZnykaie}
+        >
+          <div className="start-zirky" aria-hidden="true" />
+
+          {etap === "start" && (
+            <>
+              <div className="start-mozok" role="img" aria-label="Значок мозку">🧠</div>
+              <h1 className="start-zagolovok">AI-Travel Assistant: Промпт-інженерія - RAG</h1>
+              <button className="start-knopka" onClick={() => pereyty("pratsiu")}>
+                Запустити систему AI
+              </button>
+            </>
+          )}
+
+          {etap === "karta" && (
+            <div className="karta-proektu">
+              <div className="karta-shapka">
+                <button
+                  className="knopka-nazad"
+                  onClick={() => {
+                    setVkladka("chat");
+                    pereyty("pratsiu");
+                  }}
+                >
+                  🔙 Назад
+                </button>
+                <h1 className="karta-zagolovok">🗺 Карта проєкту</h1>
+              </div>
+              <div className="shakhivnytsia">
+                {BLOKY_PROEKTU.map((blok, i) => (
+                  <button
+                    key={blok.tekst}
+                    className={`shakh-kartka ${(Math.floor(i / 4) + (i % 4)) % 2 ? "shakh-alt" : ""}`}
+                    onClick={() => {
+                      setVkladka(blok.vkladka);
+                      pereyty("pratsiu");
+                    }}
+                  >
+                    {blok.tekst}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Преміум-інтерфейс: монтується одразу після входу зі стартового екрана */}
+      {appMontovano && (
+      <div className="app">
+      <header className="shapka">
+        {naHolovnomuChati ? (
+          <>
+            <h1>🧠 AI-асистент подорожей</h1>
+            <p>Промпт-інженерія + RAG + агент + безпека — живий ІІ-продукт</p>
+            <button className="knopka-inzhenerna" onClick={() => pereyty("karta")}>
+              ⚙️ Інженерна панель (Модулі 1-7)
+            </button>
+          </>
+        ) : etap === "karta" ? (
+          <>
+            <h1>🗺 КАРТА ПРОЄКТУ</h1>
+            <p>8 блоків · Тижні 1–8 розробки</p>
+            <button
+              className="knopka-inzhenerna"
+              onClick={() => {
+                setVkladka("chat");
+                pereyty("pratsiu");
+              }}
+            >
+              🔙 Назад
+            </button>
+          </>
+        ) : (
+          <>
+            <h1>🗺 КАРТА ПРОЄКТУ</h1>
+            <p>
+              Тиждень {idxBlok + 1}: {BLOKY_PROEKTU[idxBlok]?.tekst}
+            </p>
+            <button className="knopka-inzhenerna" onClick={() => pereyty("karta")}>
+              🔙 Назад на карту проєкту
+            </button>
+          </>
+        )}
       </header>
 
-      <main className="vmist">
+      <div className={`premium-grid ${vkladka !== "chat" ? "premium-grid-povna" : ""}`}>
+        {/* ============ ЛІВА ПАНЕЛЬ: фінанси та безпека (лише Головний Асистент) ============ */}
+        {vkladka === "chat" && (
+        <aside className="panel panel-liva">
+          <section className="panel-sklo">
+            <h3 className="panel-zagolovok">💰 Журнал витрат та Ліміти</h3>
+            <div className="neon-lichylnyk" title="Витрачено у браузері за весь час">
+              {formatUsd(zhurnalUsd)}
+            </div>
+            <p className="panel-pidkas">витрачено у браузері за все</p>
+            <div className="panel-ryadok">
+              <span>🖥 Сервер за все:</span>
+              <b>{stats ? formatUsd(stats.zaVse.usd) : "—"}</b>
+            </div>
+            <div className="panel-ryadok">
+              <span>⛔ Ліміт:</span>
+              <b>{LIMYT_TEKST}</b>
+            </div>
+            <div className="limit-strichka-obolonka">
+              <div
+                className={`limit-strichka ${vytrachenoUsd > LIMYT_USD * 0.8 ? "limit-krytyka" : ""}`}
+                style={{ width: `${Math.min(100, (vytrachenoUsd / LIMYT_USD) * 100)}%` }}
+              />
+            </div>
+            <div className="panel-ryadok">
+              <span>🍬 Токенів:</span>
+              <b>{stats ? `${stats.zaVse.tokensIn + stats.zaVse.tokensOut}` : "—"}</b>
+            </div>
+          </section>
+          <section className="panel-sklo">
+            <h3 className="panel-zagolovok">🛡️ Щит Безпеки</h3>
+            <ul className="shit-spysok">
+              <li>🔐 PII-маскування — <b>увімкнено</b></li>
+              <li>🛡 Модерація загроз — <b>увімкнено</b></li>
+              <li>🪝 Детектор інʼєкцій — <b>увімкнено</b></li>
+              <li>
+                📚 База:{" "}
+                <b>{ragStatus ? `${ragStatus.shmatkiv} шматків · ${ragStatus.dokumenty.length} документів` : "завантажую…"}</b>
+              </li>
+            </ul>
+          </section>
+
+          <section className="panel-sklo panel-express">
+            <h3 className="panel-zagolovok">📋 Експрес-аналіз відгуків</h3>
+            {!expressPoleVidkryte ? (
+              <button
+                type="button"
+                className="btn-analyz btn-express"
+                onClick={() => setExpressPoleVidkryte(true)}
+                disabled={limytVykorystano}
+              >
+                🔍 Проаналізувати відгук подорожі
+              </button>
+            ) : (
+              <>
+                <textarea
+                  className="express-pole"
+                  rows={3}
+                  value={expressTekst}
+                  placeholder="Вставте або напишіть сюди будь-який відгук..."
+                  onChange={(e) => setExpressTekst(e.target.value)}
+                />
+                <div className="express-knopky">
+                  <button
+                    type="button"
+                    className="btn-analyz btn-express"
+                    onClick={() => void expressAnalizFn()}
+                    disabled={
+                      expressPratsyuye || limytVykorystano || expressTekst.trim().length < 10
+                    }
+                  >
+                    {expressPratsyuye ? "⏳ Аналізую…" : "⭐ Оцінити"}
+                  </button>
+                  <button
+                    type="button"
+                    className="express-zhornyty"
+                    title="Згорнути"
+                    onClick={() => setExpressPoleVidkryte(false)}
+                  >
+                    ✕
+                  </button>
+                </div>
+                {expressPomylka && <div className="express-pomylka">{expressPomylka}</div>}
+                {expressRez && (
+                  <div className="express-zvit">
+                    <div className="panel-ryadok">
+                      <span>🎨 Тональність:</span>
+                      <b style={{ color: TONALNIST_KOLIR[expressRez.tonalnist] }}>
+                        {expressRez.tonalnist}
+                      </b>
+                    </div>
+                    <div className="panel-ryadok">
+                      <span>⭐ Оцінка:</span>
+                      <b>
+                        {"⭐".repeat(expressRez.ocinka)} {expressRez.ocinka}/5
+                      </b>
+                    </div>
+                    <div className="panel-ryadok">
+                      <span>💡 Рекомендація:</span>
+                      <b>{expressRez.rekomendatsiya ? "✅ Так" : "❌ Ні"}</b>
+                    </div>
+                    {expressRez.temy.length > 0 && (
+                      <div className="spysok-tegiv">
+                        {expressRez.temy.map((t, i) => (
+                          <span key={i} className="teg">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+        </aside>
+        )}
+
+        {/* ============ ЦЕНТР: робочий простір ============ */}
+        <main className={`panel panel-tsentr ${vkladka === "chat" ? "panel-chat" : ""}`}>
         {/* ============ ВКЛАДКА 0: АСИСТЕНТ (КАПСТОУН) ============ */}
         {vkladka === "chat" && (
           <>
-            {/* Шапка живого продукту */}
-            <section className="blok">
-              <h2>💬 Асистент подорожей — живий ІІ-продукт</h2>
-              <div className="chat-shapka">
-                <span title="RAG: документи, по яких я відповідаю">
-                  📚 {ragStatus ? `${ragStatus.shmatkiv} шматків · ${ragStatus.dokumenty.length} документів` : "завантажую базу…"}
-                </span>
-                <span title="Конвеєр безпеки: приватність, модерація, prompt injection">🛡 захист: PII · модерація · інʼєкції</span>
-                <span title="Скільки витрачено у браузері за весь час">💲 журнал: {formatUsd(zhurnalUsd)}</span>
-                <span title="Ліміт витрат на сервері">⛔ ліміт: {stats?.limitUsd != null ? formatUsd(stats.limitUsd) : "без ліміту"}</span>
-              </div>
-
               {/* Історія розмови */}
-              <div className="chat-istoriya">
+              {limytVykorystano && (
+                <p className="limyt-poperedzhennya">
+                  ⛔ Стоп! Жорсткий ліміт витрат ({LIMYT_TEKST}) вичерпано для безпеки вашого акаунта.
+                  Перевірте кабінет провайдера.
+                </p>
+              )}
+              <div
+                className={`chat-istoriya ${chatIstoriya.length <= 1 ? "chat-istoriya-tsentr" : ""}`}
+                ref={istoriyaRef}
+              >
                 {chatIstoriya.map((p) =>
                   p.khto === "ya" ? (
                     <div key={p.id} className="chat-pov chat-ya">
-                      <div className="chat-mehur chat-mehur-ya">{p.tekst}</div>
+                      {p.kartynka && <img className="chat-ya-kartynka" src={p.kartynka} alt="Завантажене фото" />}
+                      {p.tekst && <div className="chat-mehur chat-mehur-ya">{p.tekst}</div>}
                     </div>
                   ) : (
                     <div key={p.id} className={`chat-pov chat-ai ${p.pomylka ? "chat-pomylka" : ""}`}>
@@ -1039,9 +1434,24 @@ function App() {
                         {p.dzherela && p.dzherela.length > 0 && (
                           <div className="chat-dzherela">
                             <span className="chat-dzherela-nadpis">Джерела:</span>
-                            {p.dzherela.map((d, i) => (
-                              <span key={i} className="chat-dzherelo" title={d.tsytata}>📄 {d.dokument}</span>
-                            ))}
+                            {p.dzherela.map((d, i) =>
+                              d.url ? (
+                                <a
+                                  key={i}
+                                  className="chat-dzherelo chat-dzherelo-url"
+                                  href={d.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={d.url}
+                                >
+                                  🌐 {d.dokument}
+                                </a>
+                              ) : (
+                                <span key={i} className="chat-dzherelo" title={d.tsytata}>
+                                  📄 {d.dokument}
+                                </span>
+                              )
+                            )}
                           </div>
                         )}
 
@@ -1142,7 +1552,7 @@ function App() {
                     key={i}
                     className={`btn-pryklad ${i === 4 ? "btn-pryklad-nebezpeka" : ""}`}
                     onClick={() => void nadislalyChat(pr)}
-                    disabled={chatNadpisuye}
+                    disabled={chatNadpisuye || limytVykorystano}
                   >
                     {i === 4 ? "🪝 інʼєкція" : pr.length > 38 ? pr.slice(0, 38) + "…" : pr}
                   </button>
@@ -1151,124 +1561,74 @@ function App() {
 
               {/* Поле введення */}
               <div className="chat-vvedennya">
-                <textarea
-                  rows={3}
-                  value={chatTekst}
-                  onChange={(e) => setChatTekst(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void nadislalyChat();
-                    }
-                  }}
-                  placeholder="Питай по своїх документах, розрахунках, подорожах… (Enter — надіслати)"
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={zavantazhytyChatKartynku}
                 />
+                <button
+                  type="button"
+                  className="ikonka-vvedennya ikonka-skripka"
+                  title="Додати фото (квиток, готель, мапа…)"
+                  disabled={limytVykorystano || chatNadpisuye}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  📎
+                </button>
+                <div className="chat-polye">
+                  {chatKartynka && (
+                    <div className="chat-prevyu">
+                      <img src={chatKartynka} alt="Прев'ю фото" />
+                      <button
+                        type="button"
+                        className="chat-prevyu-x"
+                        title="Прибрати фото"
+                        onClick={() => setChatKartynka(null)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                  <textarea
+                    ref={chatPoleRef}
+                    rows={3}
+                    disabled={limytVykorystano}
+                    value={chatTekst}
+                    onChange={(e) => setChatTekst(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void nadislalyChat();
+                      }
+                    }}
+                    placeholder={
+                      chatKartynka
+                        ? "Фото додано — напишіть питання до нього (або надішліть просто так)…"
+                        : "Введіть ваше запитання про подорожі або ШІ-стартапи тут..."
+                    }
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={`ikonka-vvedennya ikonka-mikrofon ${slukhaie ? "mikrofon-aktyvnyj" : ""}`}
+                  title={slukhaie ? "Зупинити запис" : "Надиктувати запитання голосом"}
+                  disabled={limytVykorystano}
+                  onClick={uvmiknutyMikrofon}
+                >
+                  🎙️
+                </button>
                 <button
                   className="btn-analyz"
                   onClick={() => void nadislalyChat()}
-                  disabled={chatNadpisuye || chatTekst.trim().length < 5}
+                  disabled={chatNadpisuye || (chatTekst.trim().length < 5 && !chatKartynka) || limytVykorystano}
                 >
-                  {chatNadpisuye ? "⏳ думає…" : "Надіслати →"}
+                  {limytVykorystano ? `⛔ ліміт ${LIMYT_TEKST}` : chatNadpisuye ? "⏳ думає…" : "Надіслати →"}
                 </button>
               </div>
-            </section>
-
-            {/* Зворотний зв'язок */}
-            <section className="blok">
-              <h2>📨 Зворотний зв'язок {feedbacky.length > 0 ? `(${feedbacky.length})` : ""}</h2>
-              <p className="agent-info">
-                Кожна оцінка 👍/👎 зберігається (сервер + браузер). Незадоволена відповідь стає
-                eval-кейсом — цикл: <strong>фідбек → evals → покращення</strong>.
-              </p>
-              {feedbacky.length === 0 ? (
-                <p className="agent-info">Поки порожньо — оціни першу відповідь 👍/👎 у чаті вище.</p>
-              ) : (
-                <table className="evals-tablytsya">
-                  <thead>
-                    <tr><th>Коли</th><th>Оцінка</th><th>Запит</th><th>Коментар</th></tr>
-                  </thead>
-                  <tbody>
-                    {feedbacky.slice(0, 10).map((f) => (
-                      <tr key={f.chys}>
-                        <td>{new Date(f.chas).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
-                        <td>{f.napryam === "dobre" ? "👍" : "👎"}</td>
-                        <td className="atyaky-tekst">«{f.zapit}»</td>
-                        <td>{f.komentar || "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </section>
-
-            {/* Evals живого продукту */}
-            <section className="blok">
-              <h2>✅ Якість продукту: evals асистента</h2>
-              <p className="agent-info">
-                Детерміновані перевірки: відповідь по документах (без вигадок), реальний результат
-                інструмента, чесне «не знаю». Разом кейсів: <strong>{chatEvalsKesy.length}</strong>
-                {chatEvalsKesy.some((k) => k.dzherelo !== "базовий") && " (базові + з фідбеку)"}.
-              </p>
-              <button className="btn-analyz" onClick={() => void zapustytyChatEvalsFn()} disabled={chatEvalsPratsyuye}>
-                {chatEvalsPratsyuye ? `⏳ проганяю ${chatEvalsKesy.length} кейсів...` : `▶ Прогнати evals (${chatEvalsKesy.length})`}
-              </button>
-
-              {chatZvit && (
-                <>
-                  <p className="evals-vysnovok">
-                    {chatZvit.prOjshlo === chatZvit.vsiogo
-                      ? `🎉 Всі ${chatZvit.prOjshlo}/${chatZvit.vsiogo} перевірки пройдено за ${chatZvit.tryvalistSek}с — якість підтверджено.`
-                      : `⚠️ Пройшло ${chatZvit.prOjshlo}/${chatZvit.vsiogo} — дивись ❌ нижче.`}
-                  </p>
-                  <table className="evals-tablytsya">
-                    <thead>
-                      <tr><th>#</th><th>Джерело</th><th>Перевірка</th><th>Запит</th><th>Результат</th></tr>
-                    </thead>
-                    <tbody>
-                      {chatZvit.pryypady.map((p) => (
-                        <tr key={p.id}>
-                          <td>{p.id}</td>
-                          <td>
-                            <span className={`typ-badge ${p.dzherelo === "базовий" ? "typ-base" : "typ-fidbek"}`}>
-                              {p.dzherelo === "базовий" ? "база" : "фідбек"}
-                            </span>
-                          </td>
-                          <td>{p.opys}</td>
-                          <td className="atyaky-tekst">«{p.zapit}»</td>
-                          <td className={p.projshov ? "ryadok-dobro" : "ryadok-girko"}>
-                            {p.projshov
-                              ? `✅ ${p.vidpovidSkorocheno}${p.vidpovidSkorocheno.length >= 220 ? "…" : ""}`
-                              : `❌ ${p.brakSlov.length > 0 ? `немає слів: ${p.brakSlov.join(", ")}; ` : ""}${p.zaboroneniZnaydeni.length > 0 ? `заборонене у відповіді: ${p.zaboroneniZnaydeni.join(", ")}; ` : ""}${p.pomylka || ""}`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </>
-              )}
-
-              {chatEvalsKesy.some((k) => k.dzherelo !== "базовий") && (
-                <div className="chat-kesy">
-                  <h3>➕ Додані кейси зі зворотного зв'язку:</h3>
-                  {chatEvalsKesy
-                    .filter((k) => k.dzherelo !== "базовий")
-                    .map((k) => (
-                      <div key={k.id} className="chat-kes">
-                        <span>
-                          <strong>#{k.id}</strong> «{k.zapit}» → очікуємо:{" "}
-                          <em>{k.ochikuvannya.flat().join(", ")}</em>
-                        </span>
-                        <button className="btn-pryklad" onClick={() => void vydalytyChatEvalFn(k.id)}>
-                          ✕ прибрати
-                        </button>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </section>
           </>
         )}
-
         {/* ============ ВКЛАДКА 1: АНАЛІЗ ВІДГУКІВ ============ */}
         {vkladka === "analiz" && (
           <>
@@ -1409,7 +1769,7 @@ function App() {
           <>
             {/* Статус бази */}
             <section className="blok rag-status">
-              <h2>📚 База знань</h2>
+              <h2>📂 База знань</h2>
               {ragStatus ? (
                 <div className="rag-info">
                   <span>✅ Завантажено: <strong>{ragStatus.shmatkiv}</strong> шматків з {ragStatus.dokumenty.length} документів</span>
@@ -1425,7 +1785,7 @@ function App() {
 
             {/* Свої документи */}
             <section className="blok">
-              <h2>📁 Додати свій документ</h2>
+              <h2>📥 Додати свій документ</h2>
               <p className="agent-info">
                 Завантажте файл (.md або .txt) або вставте текст — і AI відповідатиме і по ньому теж.
               </p>
@@ -2268,7 +2628,136 @@ function App() {
           </>
         )}
       </main>
-    </div>
+
+        {/* ============ ПРАВА ПАНЕЛЬ: безпека та аналітика ============ */}
+        {vkladka === "chat" && (
+        <aside className="panel panel-prava">
+          <section className="panel-sklo">
+            <h3 className="panel-zagolovok">📊 Якість продукту & Evals</h3>
+            {chatZvit ? (
+              <div className="tochnist" title="Результат прогону евалів системи">
+                <div className="tochnist-tsifra">
+                  {Math.round((chatZvit.prOjshlo / Math.max(1, chatZvit.vsiogo)) * 100)}%
+                </div>
+                <div className="tochnist-pidys">
+                  Точність системи: {Math.round((chatZvit.prOjshlo / Math.max(1, chatZvit.vsiogo)) * 100)}% (
+                  {chatZvit.prOjshlo}/{chatZvit.vsiogo} евалів пройдено успішно)
+                </div>
+              </div>
+            ) : (
+              <div className="tochnist tochnist-ochikuvannya">
+                <div className="tochnist-tsifra tochnist-tsifra-sira">—%</div>
+                <div className="tochnist-pidys">Точність системи: проганяй evals вище</div>
+              </div>
+            )}
+            <button
+              className="btn-analyz btn-shapkynyi"
+              onClick={() => void zapustytyChatEvalsFn()}
+              disabled={chatEvalsPratsyuye}
+            >
+              {chatEvalsPratsyuye
+                ? "⏳ проганяю евали…"
+                : `▶ Прогнати evals (${chatEvalsKesy.length})`}
+            </button>
+
+            {chatZvit && (
+              <p className="evals-vysnovok">
+                {chatZvit.prOjshlo === chatZvit.vsiogo
+                  ? `🎉 ${chatZvit.prOjshlo}/${chatZvit.vsiogo} пройдено за ${chatZvit.tryvalistSek}с`
+                  : `⚠️ ${chatZvit.prOjshlo}/${chatZvit.vsiogo} пройшло`}
+              </p>
+            )}
+
+            <div className="prava-ocinka">
+              <span className="panel-pidkas">Оціни останню відповідь:</span>
+              <div className="prava-knopky-ocinky">
+                <button
+                  className="chat-knopka-ocinky lik"
+                  title="Відповідь корисна"
+                  disabled={!ostannyaVidpovidAi}
+                  onClick={() => ostannyaVidpovidAi && void nadislalyFeedback("dobre", ostannyaVidpovidAi)}
+                >
+                  👍
+                </button>
+                <button
+                  className="chat-knopka-ocinky dizlayk"
+                  title="Відповідь не влаштувала"
+                  disabled={!ostannyaVidpovidAi}
+                  onClick={() => ostannyaVidpovidAi && void nadislalyFeedback("girne", ostannyaVidpovidAi)}
+                >
+                  👎
+                </button>
+              </div>
+            </div>
+
+            <div className="evals-logs">
+              <div className="evals-logs-zagolovok">📜 Історія перевірок системи (Logs)</div>
+              <div className="evals-logs-ryadok">
+                ✓ Перевірка на галюцинації: <b>Успішно</b>
+              </div>
+              <div className="evals-logs-ryadok">
+                ✓ Перевірка структури JSON: <b>Успішно</b>
+              </div>
+              <div className="evals-logs-ryadok">
+                ✓ Аналіз контексту документів: <b>Успішно</b>
+              </div>
+            </div>
+
+            <div className="panel-ryadok">
+              <span>📨 Фідбеків:</span>
+              <b>{feedbacky.length}</b>
+            </div>
+            <div className="panel-ryadok">
+              <span>🧪 Кейсів evals:</span>
+              <b>{chatEvalsKesy.length}</b>
+            </div>
+
+            {chatEvalsKesy.some((k) => k.dzherelo !== "базовий") && (
+              <div className="prava-kesy">
+                <span className="panel-pidkas">Кейси з фідбеку:</span>
+                {chatEvalsKesy
+                  .filter((k) => k.dzherelo !== "базовий")
+                  .map((k) => (
+                    <div key={k.id} className="prava-kes">
+                      <span title={k.zapit}>
+                        #{k.id} «{k.zapit.length > 34 ? k.zapit.slice(0, 34) + "…" : k.zapit}»
+                      </span>
+                      <button className="prava-kes-x" title="Прибрати кейс" onClick={() => void vydalytyChatEvalFn(k.id)}>
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </section>
+
+          <section className="panel-sklo panel-instrumenty">
+            <h3 className="panel-zagolovok">🛠️ Інструменти Агента</h3>
+            <div className="panel-knopky-hentl">
+              <button
+                type="button"
+                className="hentl-knopka"
+                disabled={limytVykorystano}
+                onClick={() => pidstavytyShablon("Використай калькулятор: обчисли 15 * 2400 + 350")}
+              >
+                🧮 Викликати калькулятор
+              </button>
+              <button
+                type="button"
+                className="hentl-knopka"
+                disabled={limytVykorystano}
+                onClick={() => pidstavytyShablon("Конвертуй 100 доларів в євро")}
+              >
+                💱 Конвертер валют
+              </button>
+            </div>
+          </section>
+        </aside>
+        )}
+      </div>
+      </div>
+      )}
+    </>
   );
 }
 

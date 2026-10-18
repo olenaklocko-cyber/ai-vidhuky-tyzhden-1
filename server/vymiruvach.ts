@@ -41,7 +41,7 @@ function porozhniiStan(): StanFichy {
 }
 
 const stany: Record<string, StanFichy> = {};
-let limitUsd: number | null = null;
+let limitUsd: number | null = 2;
 
 // ============================================================
 // КЕШ ПОВТОРНИХ ЗАПИТІВ (0 токенів, 0 $, ~0 мс)

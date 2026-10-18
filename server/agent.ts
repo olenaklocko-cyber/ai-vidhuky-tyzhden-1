@@ -31,6 +31,8 @@ export interface VidpovidAgenta {
   vdpovisd: string;
   kroky: KrokAgenta[];
   toolVykorystano: string[];
+  /** Живі URL з інтернет-пошуку (webSearch) */
+  webDzherela: WebDzherelo[];
   /** Агрегована вартість усього ланцюжка викликів (тиждень 8) */
   usage: { promptTokenCount: number; candidatesTokenCount: number; thoughtsTokenCount: number };
   model: string;
@@ -120,6 +122,81 @@ export function konverter(valyutaZ: string, valyutaDo: string, suma: number): st
 }
 
 // ============================================================
+// 2b. ІНТЕРНЕТ-ПОШУК (Google Search grounding у Gemini)
+// ============================================================
+
+export interface WebDzherelo {
+  url: string;
+  title: string;
+}
+
+interface UsageVyklyku {
+  promptTokenCount: number;
+  candidatesTokenCount: number;
+  thoughtsTokenCount: number;
+}
+
+/**
+ * Інструмент webSearch: актуальна інформація з реальних сайтів.
+ * Викликає окрему генерацію Gemini з Google Search grounding
+ * (без окремого API-ключа — працює наявний LLM_API_KEY).
+ */
+export async function pooshukVInterneti(
+  zapit: string
+): Promise<{ tekst: string; dzherela: WebDzherelo[]; usage: UsageVyklyku }> {
+  const model = otrymatyGenAI().getGenerativeModel({ model: MODEL_AGENTA });
+
+  const usage: UsageVyklyku = { promptTokenCount: 0, candidatesTokenCount: 0, thoughtsTokenCount: 0 };
+  let tekst = "";
+  let dzherela: WebDzherelo[] = [];
+
+  for (let sproba = 0; sproba < 2 && dzherela.length === 0; sproba++) {
+    const res = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text:
+                `Ти — інструмент інтернет-пошуку. Знайди актуальну інформацію за запитом і поверни стислий ` +
+                `виклад ключових фактів українською (3-6 речень). Після кожної тези додай URL джерела ` +
+                `у квадратних дужках.` +
+                (sproba > 0 ? ` ПОВТОРЮЙ: скористайся пошуком Google, відповідай тільки за його результатами.` : "") +
+                `\n\nЗапит: ${zapit}`,
+            },
+          ],
+        },
+      ],
+      tools: [{ googleSearch: {} }] as never,
+      generationConfig: { temperature: 0.2 },
+    } as never);
+
+    const parts = res.response.candidates?.[0]?.content?.parts ?? [];
+    tekst = parts.map((p) => p.text ?? "").join("\n").trim();
+    const um = res.response.usageMetadata;
+    usage.promptTokenCount += um?.promptTokenCount ?? 0;
+    usage.candidatesTokenCount += um?.candidatesTokenCount ?? 0;
+    usage.thoughtsTokenCount +=
+      (um as { thoughtsTokenCount?: number } | undefined)?.thoughtsTokenCount ?? 0;
+
+    type Gm = { groundingChunks?: { web?: { uri?: string; title?: string } }[] } | undefined;
+    const cand = res.response.candidates?.[0] as unknown as { groundingMetadata?: Gm } | undefined;
+    const gm: Gm =
+      cand?.groundingMetadata ??
+      (res.response as unknown as { groundingMetadata?: Gm }).groundingMetadata;
+    dzherela = (gm?.groundingChunks ?? [])
+      .map((c) => ({ url: c.web?.uri ?? "", title: c.web?.title ?? c.web?.uri ?? "" }))
+      .filter((d) => d.url.startsWith("http"));
+  }
+
+  return {
+    tekst: tekst || "Інтернет-пошук не повернув результату. Спробуй перефразувати запит.",
+    dzherela,
+    usage,
+  };
+}
+
+// ============================================================
 // 3. СХЕМА ІНСТРУМЕНТІВ (для Gemini function calling)
 // ============================================================
 
@@ -145,6 +222,18 @@ export const TOOLS = [
         misto: { type: "string", description: "Назва міста (напр: Рим)" },
         maxCina: { type: "number", description: "Максимальна ціна в USD" },
       },
+    },
+  },
+  {
+    name: "webSearch",
+    description:
+      "Пошук в інтернеті (Google Search): актуальні правила в'їзду, погода, курси валют, ціни, новини. ВИКОРИСТОВУЙ, коли відповіді немає в документах користувача або потрібні актуальні дані на сьогодні.",
+    parameters: {
+      type: "object",
+      properties: {
+        zapit: { type: "string", description: "Конкретний пошуковий запит" },
+      },
+      required: ["zapit"],
     },
   },
   {
@@ -175,7 +264,10 @@ const AGENT_PROMPT = `Ти — розумний агент-помічник з �
 4. Якщо інструмент не потрібен — просто відповідай.
 5. НЕ вигадуй результати інструментів — тільки реальні відповіді.
 6. Відповідай українською.
-7. Поясни свій ланцюжок міркувань: що думав, що викликав, що отримав.`;
+7. Поясни свій ланцюжок міркувань: що думав, що викликав, що отримав.
+8. Якщо в документах користувача немає відповіді або потрібні АКТУАЛЬНІ дані
+   (правила в'їзду, погода, курси, ціни, новини на сьогодні) — виклич webSearch
+   і відповідай по результатах інтернет-пошуку, зазначаючи сайти-джерела.`;
 
 // ============================================================
 // 5. ЦИКЛ АГЕНТА (think → call → result → respond)
@@ -200,6 +292,7 @@ export async function zapytDoAgenta(
   const kroky: KrokAgenta[] = [];
   let potocnyyKrok = 0;
   const toolVykorystano: string[] = [];
+  const webDzherela: WebDzherelo[] = [];
   const usage = { promptTokenCount: 0, candidatesTokenCount: 0, thoughtsTokenCount: 0 };
 
   const istoriya: Content[] = [
@@ -264,6 +357,15 @@ export async function zapytDoAgenta(
               (args as { suma: number }).suma
             );
             break;
+          case "webSearch": {
+            const poshuk = await pooshukVInterneti((args as { zapit: string }).zapit);
+            rezultat = poshuk.tekst;
+            webDzherela.push(...poshuk.dzherela);
+            usage.promptTokenCount += poshuk.usage.promptTokenCount;
+            usage.candidatesTokenCount += poshuk.usage.candidatesTokenCount;
+            usage.thoughtsTokenCount += poshuk.usage.thoughtsTokenCount;
+            break;
+          }
           default:
             rezultat = `Невідомий інструмент: ${name}`;
         }
@@ -295,6 +397,7 @@ export async function zapytDoAgenta(
     vdpovisd: finalText,
     kroky,
     toolVykorystano,
+    webDzherela,
     usage,
     model: MODEL_AGENTA,
     ms: Date.now() - ts1,

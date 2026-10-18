@@ -4,14 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k \"npm run server\" \"npm run dev:ui\"",
+    "dev:ui": "vite",
+    "dev:all": "npm run dev",
     "build": "node scripts/zibatyBazu.mjs && tsc -b && vite build && npm run build:api",
     "build:api": "esbuild server/server.ts --bundle --platform=node --format=esm --outfile=api/_server.mjs --packages=external --log-level=warning",
     "baza": "node scripts/zibatyBazu.mjs",
     "lint": "oxlint",
     "preview": "vite preview",
-    "server": "tsx server/server.ts",
-    "dev:all": "concurrently \"npm run server\" \"npm run dev\""
+    "server": "tsx server/server.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
