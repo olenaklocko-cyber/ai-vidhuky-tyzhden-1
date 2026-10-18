@@ -11,8 +11,9 @@ import { z } from "zod";
 const PORT = 3001;
 const apiKey = process.env.LLM_API_KEY;
 if (!apiKey) {
-  console.error("❌ LLM_API_KEY не задано у server/.env");
-  process.exit(1);
+  // Не вбиваємо процес: на Vercel ключ приходить з env у рантаймі,
+  // а помилка з'явиться у відповідях конкретних ендпоінтів.
+  console.error("⚠️ LLM_API_KEY не задано (server/.env або Vercel env)");
 }
 
 // ============================================================
@@ -104,29 +105,16 @@ app.get("/api/zdorovya", (_req, res) => {
 // ============================================================
 // RAG: завантаження документів + пошук + відповідь
 // ============================================================
-import { zavantazhytyDokumenty, VektorBaza, vidpovistyPoRag, zberehtyDokumentKorystuvacha } from "./rag.js";
+import { vektorBaza, pidklyuchytyBazu, vidpovistyPoRag, zberehtyDokumentKorystuvacha } from "./rag.js";
 
-const vektorBaza = new VektorBaza();
+// Підіймаємо базу документів одразу (ліне́йно, один раз на процес)
+void pidklyuchytyBazu().catch((e) => console.error("⚠️ RAG-база не завантажилась:", e));
 
-/** POST /api/rag/zavantazhyty — завантажуємо документи та рахуємо ембеддинги */
+/** POST /api/rag/zavantazhyty — перезавантажуємо документи та ембеддинги */
 app.post("/api/rag/zavantazhyty", async (_req, res) => {
   try {
-    const dokumenty = zavantazhytyDokumenty();
-    let vseShmatky = 0;
-
-    // Очищаємо базу перед перезавантаженням, щоб не було дублікатів
-    vektorBaza.ochystyty();
-
-    for (const doc of dokumenty) {
-      const kilkist = await vektorBaza.dodatyDokument(doc.nazva, doc.tekst);
-      vseShmatky += kilkist;
-    }
-
-    res.json({
-      dokumentiv: dokumenty.length,
-      shmatkiv: vseShmatky,
-      nazvy: dokumenty.map((d) => d.nazva),
-    });
+    const rezultat = await pidklyuchytyBazu(true);
+    res.json(rezultat);
   } catch (e) {
     res.status(500).json({
       pomylka: e instanceof Error ? e.message : "Помилка завантаження",
@@ -146,8 +134,8 @@ app.post("/api/rag/dodaty", async (req, res) => {
   }
 
   try {
-    // 1. Зберігаємо файл на диск (щоб не загубився після перезапуску)
-    zberehtyDokumentKorystuvacha(nazva.trim(), tekst);
+    // 1. Зберігаємо файл на диск (локально); на Vercel FS read-only → null
+    const fayl = zberehtyDokumentKorystuvacha(nazva.trim(), tekst);
 
     // 2. Додаємо у векторну базу (рядок "📄 назва.md" — щоб відрізняти свої від базових)
     const nazvaVDokumentakh = `📄 ${nazva.trim()}.md`;
@@ -158,6 +146,7 @@ app.post("/api/rag/dodaty", async (req, res) => {
       shmatkivDodano: kilkist,
       vseShmatkiv: vektorBaza.kilkistShmatkiv,
       nazva: nazvaVDokumentakh,
+      zberezhenoNaDysku: fayl !== null,
     });
   } catch (e) {
     res.status(500).json({
@@ -174,6 +163,13 @@ app.post("/api/rag/zapyt", async (req, res) => {
     return res.status(400).json({ pomylka: "Запит має містити мінімум 5 символів" });
   }
 
+  if (vektorBaza.kilkistShmatkiv === 0) {
+    try {
+      await pidklyuchytyBazu();
+    } catch {
+      // якщо ембединги недоступні — нижче повернеться помилка
+    }
+  }
   if (vektorBaza.kilkistShmatkiv === 0) {
     return res.status(400).json({
       pomylka: "Документи ще не завантажені. Натисни «Завантажити документи».",
@@ -244,13 +240,8 @@ app.post("/api/vision", async (req, res) => {
   }
 
   try {
-    const zapytText = zapyt || `Опиши цю картинку українською. Бути конкретним:
-- Що зображено (об'єкти, люди, місце)?
-- Який колір/настрій?
-- Цікаві деталі?
-Відповідай стисло, 3-5 речень.`;
-
-    const opys = await opysatyKartynku(base64, mime);
+    // zapyt — питання користувача до картинки (без нього — стандартний опис)
+    const opys = await opysatyKartynku(base64, mime, zapyt);
     res.json({ opys });
   } catch (e) {
     res.status(500).json({
@@ -421,6 +412,163 @@ app.get("/api/bezpeka/ostanniy", (_req, res) => {
   res.json(otrymatyOstanniAtyaky());
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Сервер працює на http://localhost:${PORT}`);
+// ============================================================
+// ТИЖДЕНЬ 8: КАПСТОУН — єдиний асистент + фідбек + evals
+// ============================================================
+import { zapytDoAsystenta } from "./chat.js";
+import {
+  otrymatyChatEvals,
+  dodatyChatEval,
+  vydalytyChatEval,
+  zapustytyChatEvals,
+} from "./chatEvals.js";
+import { randomUUID } from "crypto";
+
+/** POST /api/chat — один запит через увесь конвеєр:
+ *  приватність → модерація → інʼєкція → RAG → агент з інструментами →
+ *  чистка виходу → ціна. У відповіді: джерела, кроки, meta, bezpeka. */
+app.post("/api/chat", async (req, res) => {
+  const { zapyt } = req.body as { zapyt?: string };
+
+  if (!zapyt || zapyt.trim().length < 5) {
+    return res.status(400).json({ pomylka: "Повідомлення має містити мінімум 5 символів" });
+  }
+  if (zapyt.length > 4000) {
+    return res.status(400).json({ pomylka: "Повідомлення завелике (максимум 4000 символів)" });
+  }
+
+  try {
+    const rez = await zapytDoAsystenta(zapyt);
+    if (rez.blok) {
+      return res.status(400).json({
+        pomylka: `🚫 Заблоковано модерацією: ${rez.prychyna}`,
+        moderatsiia: { kategoriia: rez.kategoriia, prychyna: rez.prychyna },
+      });
+    }
+    return res.json(rez);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Помилка асистента";
+    const chyLimit = msg.startsWith("⛔");
+    return res.status(chyLimit ? 429 : 500).json({ pomylka: msg });
+  }
 });
+
+// --- Зворотний зв'язок: 👍/👎 на відповіді живого продукту ---
+
+interface ZapisFeedback {
+  chys: string;
+  napryam: "dobre" | "girne";
+  zapit: string;
+  vidpovid: string;
+  komentar?: string;
+  chas: string;
+}
+
+const zapisyFeedback: ZapisFeedback[] = [];
+
+/** POST /api/feedback — збір зворотного зв'язку з живого продукту */
+app.post("/api/feedback", (req, res) => {
+  const { napryam, zapit, vidpovid, komentar } = req.body as {
+    napryam?: string;
+    zapit?: string;
+    vidpovid?: string;
+    komentar?: string;
+  };
+
+  if (napryam !== "dobre" && napryam !== "girne") {
+    return res.status(400).json({ pomylka: 'napryam має бути "dobre" або "girne"' });
+  }
+  if (!zapit || !vidpovid) {
+    return res.status(400).json({ pomylka: "Потрібні zapit і vidpovid" });
+  }
+
+  const zapis: ZapisFeedback = {
+    chys: randomUUID(),
+    napryam,
+    zapit: String(zapit).slice(0, 2000),
+    vidpovid: String(vidpovid).slice(0, 4000),
+    komentar: komentar ? String(komentar).slice(0, 1000) : undefined,
+    chas: new Date().toISOString(),
+  };
+  zapisyFeedback.unshift(zapis);
+  if (zapisyFeedback.length > 200) zapisyFeedback.pop();
+
+  res.json({ ok: true, vsiogo: zapisyFeedback.length, zapis });
+});
+
+/** GET /api/feedback — останні записи */
+app.get("/api/feedback", (_req, res) => {
+  res.json({ zapisy: zapisyFeedback });
+});
+
+// --- Evals асистента: базові + кейси зі зворотного зв'язку ---
+
+/** GET /api/evals/chat — усі кейси (базові + додані) */
+app.get("/api/evals/chat", (_req, res) => {
+  res.json({ pryypady: otrymatyChatEvals() });
+});
+
+/** POST /api/evals/chat/dodaty — поганий відгук 👎 → eval-кейс */
+app.post("/api/evals/chat/dodaty", (req, res) => {
+  const { opys, zapit, ochikuvannya, zaboroneniSlova } = req.body as {
+    opys?: string;
+    zapit?: string;
+    ochikuvannya?: string[];
+    zaboroneniSlova?: string[];
+  };
+
+  if (!zapit || zapit.trim().length < 5) {
+    return res.status(400).json({ pomylka: "Потрібен запит (мінімум 5 символів)" });
+  }
+  if (!Array.isArray(ochikuvannya) || ochikuvannya.filter((s) => typeof s === "string" && s.trim()).length === 0) {
+    return res.status(400).json({ pomylka: "Вкажіть очікувані ключові слова (через кому)" });
+  }
+
+  const slova = (ochikuvannya as unknown[]).filter((s): s is string => typeof s === "string");
+  const klyuchi = slova
+    .flatMap((s) => s.split(","))
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const novyy = dodatyChatEval({
+    opys: (opys || `Зі зворотного зв'язку: ${zapit.slice(0, 80)}`).slice(0, 120),
+    zapit: zapit.trim(),
+    ochikuvannya: klyuchi,
+    zaboroneniSlova: Array.isArray(zaboroneniSlova) ? (zaboroneniSlova as unknown[]).filter((s): s is string => typeof s === "string") : [],
+  });
+
+  res.json({ ok: true, pryypad: novyy, pryypady: otrymatyChatEvals() });
+});
+
+/** DELETE /api/evals/chat/:id — прибрати кейс (доданий) */
+app.delete("/api/evals/chat/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ pomylka: "Некоректний id" });
+  }
+  res.json({ ok: vydalytyChatEval(id), pryypady: otrymatyChatEvals() });
+});
+
+/** POST /api/evals/chat/zapustyty — прогін усіх кейсів асистента */
+app.post("/api/evals/chat/zapustyty", async (_req, res) => {
+  try {
+    const zvit = await zapustytyChatEvals();
+    res.json(zvit);
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка прогону evals асистента",
+    });
+  }
+});
+
+// ============================================================
+// ЗАПУСК: локально — звичайний сервер; на Vercel — експорт
+// як Node.js-функції (див. api/index.ts), без listen.
+// ============================================================
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`✅ Сервер працює на http://localhost:${PORT}`);
+  });
+}
+
+export default app;

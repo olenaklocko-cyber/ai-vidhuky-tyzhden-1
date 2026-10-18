@@ -84,15 +84,20 @@ export function ochystytyKesh(): void {
 /** Отримує usageMetadata відповіді SDK і рахує вартість виклику */
 export function rozrahuvatyVykyk(
   model: string,
-  usage: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number },
+  usage: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    cachedContentTokenCount?: number;
+    thoughtsTokenCount?: number;
+  },
   ms: number
 ): MetaVykyku {
   const tsina = TSINY[model] || TSINY[ZAMOVCHUVALNYI_MODEL];
 
   const tokensIn = usage.promptTokenCount ?? 0;
   const keshovano = usage.cachedContentTokenCount ?? 0;
-  // thoughtsTokenCount не оголошено у типах SDK, але є у реальній відповіді
-  const thoughts = (usage as { thoughtsTokenCount?: number }).thoughtsTokenCount ?? 0;
+  // thoughtsTokenCount не оголошено у типах SDK, але ми оголошуємо своє
+  const thoughts = usage.thoughtsTokenCount ?? 0;
   const candidates = usage.candidatesTokenCount ?? 0;
   const tokensOut = candidates + thoughts; // думки тарифікуються як вихід
 

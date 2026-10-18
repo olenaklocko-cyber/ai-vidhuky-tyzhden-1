@@ -814,3 +814,94 @@ textarea:focus {
 .meta-nevyvpewnst { background: #fff4e5; border-color: #ffd8a8; color: #b54708; }
 .znachennya.nevyvpewnst { color: #b54708 !important; font-size: 17px; }
 .atyaky-tekst { max-width: 300px; font-size: 13px; color: #555; font-style: italic; }
+
+/* ============ ВКЛАДКА 0: АСИСТЕНТ (КАПСТОУН) ============ */
+.chat-shapka {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+}
+.chat-shapka span {
+  background: #eef1fb; border: 1px solid #dfe3f7; color: #3b4270;
+  border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+}
+
+.chat-istoriya {
+  background: var(--panely, #f8f9ff);
+  border: 1px solid #e3e6f5; border-radius: 16px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+  max-height: 480px; overflow-y: auto;
+}
+.chat-pov { display: flex; }
+.chat-ya { justify-content: flex-end; }
+.chat-ai { justify-content: flex-start; }
+.chat-mehur {
+  max-width: 86%; padding: 10px 14px; border-radius: 16px;
+  background: #fff; border: 1px solid #e3e6f5; line-height: 1.5;
+}
+.chat-mehur-ya { background: #dcebff; border-color: #bcd9ff; border-bottom-right-radius: 4px; }
+.chat-ai .chat-mehur { border-bottom-left-radius: 4px; }
+.chat-pomylka .chat-mehur { background: #fee4e2; border-color: #fecdca; }
+.chat-tekst { margin: 0; font-size: 15px; white-space: pre-wrap; }
+.chat-dumaye { color: #667085; font-style: italic; background: #f2f4f7; }
+
+.chat-dzherela { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.chat-dzherela-nadpis { font-size: 12px; color: #667085; font-weight: 600; }
+.chat-dzherelo {
+  background: #e7f7ee; border: 1px solid #b3e6c8; color: #067647;
+  border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600;
+  cursor: help;
+}
+
+.chat-kroky { margin-top: 8px; font-size: 13px; }
+.chat-kroky summary { cursor: pointer; color: #475467; font-weight: 600; }
+.chat-krok { padding: 4px 0 4px 8px; border-left: 2px solid #d0d5dd; margin-top: 4px; color: #475467; }
+.chat-krok-vyklykTool { border-color: #f79009; }
+.chat-krok-rezultatTool { border-color: #12b76a; }
+.chat-krok-vdpovisd { border-color: #1677ff; }
+.chat-krok code { display: block; background: #f2f4f7; padding: 2px 6px; border-radius: 6px; margin-top: 3px; font-size: 12px; }
+
+.chat-ocinka { display: flex; gap: 6px; margin-top: 10px; }
+.chat-knopka-ocinky {
+  border: 1px solid #d0d5dd; background: #fff; border-radius: 10px;
+  padding: 4px 12px; font-size: 15px; cursor: pointer; transition: transform .1s;
+}
+.chat-knopka-ocinky:hover { transform: scale(1.12); border-color: #1677ff; }
+.chat-knopka-ocinky.aktyvna { background: #fff4e5; border-color: #f79009; }
+
+.chat-feedback-forma { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.chat-feedback-forma textarea,
+.chat-feedback-forma input {
+  border: 1px solid #d0d5dd; border-radius: 10px; padding: 8px 10px;
+  font: inherit; font-size: 13.5px; resize: vertical;
+}
+.chat-feedback-knopky { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-feedback-knopky button {
+  border: 1px solid #d0d5dd; background: #fff; border-radius: 10px;
+  padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.chat-feedback-knopky button:disabled { opacity: .45; cursor: not-allowed; }
+.chat-feedback-knopky button:not(:disabled):hover { border-color: #1677ff; color: #1677ff; }
+
+.chat-povidomlennya {
+  margin-top: 10px; font-size: 13.5px; font-weight: 600; color: #067647;
+  background: #e7f7ee; border: 1px solid #b3e6c8; border-radius: 10px; padding: 8px 12px;
+}
+
+.chat-vvedennya { display: flex; gap: 10px; margin-top: 12px; align-items: stretch; }
+.chat-vvedennya textarea {
+  flex: 1; border: 1px solid #d0d5dd; border-radius: 12px; padding: 10px 12px;
+  font: inherit; font-size: 15px; resize: vertical;
+}
+.chat-vvedennya textarea:focus { outline: 2px solid #1677ff; border-color: transparent; }
+
+.btn-pryklad-nebezpeka { background: #fff4e5 !important; border-color: #f79009 !important; color: #b54708 !important; }
+
+.typ-base { background: #e7f7ee; color: #067647; }
+.typ-fidbek { background: #e0f2fe; color: #026aa2; }
+
+.chat-kesy { margin-top: 14px; }
+.chat-kesy h3 { font-size: 15px; margin: 0 0 8px; }
+.chat-kes {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  background: var(--panely, #f8f9ff); border: 1px solid #e3e6f5;
+  border-radius: 10px; padding: 8px 12px; margin-bottom: 6px; font-size: 13.5px;
+}

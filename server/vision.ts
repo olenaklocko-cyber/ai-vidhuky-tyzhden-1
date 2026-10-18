@@ -16,12 +16,22 @@ function otrymatyGenAI(): GoogleGenerativeAI {
 
 export async function opysatyKartynku(
   base64: string,
-  mime: string
+  mime: string,
+  zapyt?: string
 ): Promise<string> {
   const model = otrymatyGenAI().getGenerativeModel({
     model: "gemini-3.8-flash",
     generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
   });
+
+  const prompt =
+    zapyt && zapyt.trim().length >= 3
+      ? `${zapyt.trim()}\n(Відповідай українською мовою по суті запиту; якщо запит не стосується картинки — все одно коротко опиши, що на ній.)`
+      : `Опиши цю картинку українською мовою. Бути конкретним:
+- Що зображено (об'єкти, люди, місце)?
+- Який колір/настрій?
+- Цікаві деталі?
+Відповідай стисло, 3-5 речень.`;
 
   const result = await model.generateContent([
     {
@@ -31,11 +41,7 @@ export async function opysatyKartynku(
       },
     },
     {
-      text: `Опиши цю картинку українською мовою. Бути конкретним:
-- Що зображено (об'єкти, люди, місце)?
-- Який колір/настрій?
-- Цікаві деталі?
-Відповідай стисло, 3-5 речень.`,
+      text: prompt,
     },
   ]);
 

@@ -8,3 +8,7 @@ server/.env.bak
 .env.bak
 server/.env
 .env
+.vercel/
+.vercel
+.env*
+api/_server.mjs

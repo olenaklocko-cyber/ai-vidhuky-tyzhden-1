@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+// Документи у бандлі (на Vercel FS read-only — читаємо з JSON, згенерованого npm run baza)
+import BAZA_DOCS from "./bazaDocs.json" with { type: "json" };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,35 +38,51 @@ export interface VidpovidPoRag {
 // 1. РОЗБИВКА ДОКУМЕНТІВ НА ШМАТКИ (chunks)
 // ============================================================
 
-/** Читаємо всі .md/.txt файли з папок dokumenty + korystuvatskiDokumenty */
+/**
+ * Читаємо документи: база — з bazaDocs.json (бандлиться куди завгодно),
+ * документи користувача — з диска (локально), якщо FS дозволяє.
+ * Дублікати (ті, що вже в JSON) прибираємо.
+ */
 export function zavantazhytyDokumenty(): { nazva: string; tekst: string }[] {
-  const papky = ["dokumenty", "korystuvatskiDokumenty"];
-  const dokumenty: { nazva: string; tekst: string }[] = [];
+  const dokumenty: { nazva: string; tekst: string }[] = BAZA_DOCS.map((d) => ({
+    nazva: d.nazva,
+    tekst: d.tekst,
+  }));
+  const uzheYe = new Set(dokumenty.map((d) => d.nazva));
 
-  for (const nazvaPapky of papky) {
-    const papka = path.join(__dirname, nazvaPapky);
-    if (!fs.existsSync(papka)) continue;
-    const fayly = fs.readdirSync(papka).filter((f) => f.endsWith(".md") || f.endsWith(".txt"));
-    for (const f of fayly) {
-      dokumenty.push({
-        nazva: nazvaPapky === "korystuvatskiDokumenty" ? `📄 ${f}` : f,
-        tekst: fs.readFileSync(path.join(papka, f), "utf-8"),
-      });
+  // Локальні документи користувача (нові, яких ще немає в JSON)
+  try {
+    const papka = path.join(__dirname, "korystuvatskiDokumenty");
+    if (fs.existsSync(papka)) {
+      const fayly = fs.readdirSync(papka).filter((f) => f.endsWith(".md") || f.endsWith(".txt"));
+      for (const f of fayly) {
+        const nazva = `📄 ${f}`;
+        if (uzheYe.has(nazva)) continue;
+        dokumenty.push({ nazva, tekst: fs.readFileSync(path.join(papka, f), "utf-8") });
+      }
     }
+  } catch {
+    // На Vercel диска немає — просто пропускаємо
   }
+
   return dokumenty;
 }
 
-/** Зберігаємо документ користувача на диск */
-export function zberehtyDokumentKorystuvacha(nazva: string, tekst: string): string {
-  const papka = path.join(__dirname, "korystuvatskiDokumenty");
-  if (!fs.existsSync(papka)) fs.mkdirSync(papka, { recursive: true });
+/** Зберігаємо документ користувача на диск (на Vercel FS read-only → null) */
+export function zberehtyDokumentKorystuvacha(nazva: string, tekst: string): string | null {
+  try {
+    const papka = path.join(__dirname, "korystuvatskiDokumenty");
+    if (!fs.existsSync(papka)) fs.mkdirSync(papka, { recursive: true });
 
-  // Безпечне ім'я файлу: прибираємо небезпечні символи
-  const bezpechnaNazva = nazva.replace(/[^\p{L}\p{N}\w.-]/gu, "_").slice(0, 100);
-  const fayl = path.join(papka, `${bezpechnaNazva}.md`);
-  fs.writeFileSync(fayl, tekst, "utf-8");
-  return fayl;
+    // Безпечне ім'я файлу: прибираємо небезпечні символи
+    const bezpechnaNazva = nazva.replace(/[^\p{L}\p{N}\w.-]/gu, "_").slice(0, 100);
+    const fayl = path.join(papka, `${bezpechnaNazva}.md`);
+    fs.writeFileSync(fayl, tekst, "utf-8");
+    return fayl;
+  } catch {
+    // Read-only FS (Vercel) — документ живе лише в пам'яті цієї сесії
+    return null;
+  }
 }
 
 /**
@@ -103,7 +121,7 @@ export async function otrymatyVektor(tekst: string): Promise<number[]> {
 export async function otrymatyVektory(teksty: string[]): Promise<number[][]> {
   const model = otrymatyGenAI().getGenerativeModel({ model: "gemini-embedding-001" });
   const result = await model.batchEmbedContents({
-    requests: teksty.map((t) => ({ content: { parts: [{ text: t }] } })),
+    requests: teksty.map((t) => ({ content: { role: "user", parts: [{ text: t }] } })),
   });
   return result.embeddings.map((e) => e.values);
 }
@@ -221,4 +239,60 @@ export async function vidpovistyPoRag(
     })),
     shmatkivZnaydeno: знaydeni.length,
   };
+}
+
+// ============================================================
+// 6. СІНГЛТОН БАЗИ + ЛІНЕЙНЕ АВТОЗАВАНТАЖЕННЯ
+// ============================================================
+
+/** Спільна векторна база (живе в одному процесі) */
+export const vektorBaza = new VektorBaza();
+
+export interface PidklyuchennyaBazy {
+  dokumentiv: number;
+  shmatkiv: number;
+  nazvy: string[];
+}
+
+let bazovePromise: Promise<PidklyuchennyaBazy> | null = null;
+
+async function vnavchytyBazu(): Promise<PidklyuchennyaBazy> {
+  vektorBaza.ochystyty();
+  const dokumenty = zavantazhytyDokumenty();
+  let vseShmatky = 0;
+  for (const doc of dokumenty) {
+    vseShmatky += await vektorBaza.dodatyDokument(doc.nazva, doc.tekst);
+  }
+  return {
+    dokumentiv: dokumenty.length,
+    shmatkiv: vseShmatky,
+    nazvy: dokumenty.map((d) => d.nazva),
+  };
+}
+
+/**
+ * Перше завантаження бази (один раз на життя процесу).
+ * prymusovo=true — перезавантажуємо (кнопка «Завантажити документи»),
+ * чекаючи завершення попереднього завантаження, щоб не було дублікатів.
+ * При помилці скидаємо проміс, щоб можна було повторити.
+ */
+export function pidklyuchytyBazu(prymusovo = false): Promise<PidklyuchennyaBazy> {
+  if (prymusovo) {
+    const poperednya = bazovePromise ?? Promise.resolve(null);
+    const p: Promise<PidklyuchennyaBazy> = poperednya.catch(() => null).then(() => vnavchytyBazu());
+    const zUmovoyu = p.catch((e) => {
+      if (bazovePromise === zUmovoyu) bazovePromise = null;
+      throw e;
+    });
+    bazovePromise = zUmovoyu;
+    return zUmovoyu;
+  }
+  if (!bazovePromise) {
+    const p: Promise<PidklyuchennyaBazy> = vnavchytyBazu().catch((e) => {
+      if (bazovePromise === p) bazovePromise = null;
+      throw e;
+    });
+    bazovePromise = p;
+  }
+  return bazovePromise;
 }

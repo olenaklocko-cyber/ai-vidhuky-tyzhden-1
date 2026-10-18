@@ -1,4 +1,7 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, type GenerationConfig, type Content, type FunctionDeclaration } from "@google/generative-ai";
+
+/** Модель агента/асистента (капстоун: вона ж у чаті) */
+export const MODEL_AGENTA = "gemini-3.8-flash";
 
 let _genAI: GoogleGenerativeAI | null = null;
 function otrymatyGenAI(): GoogleGenerativeAI {
@@ -28,6 +31,10 @@ export interface VidpovidAgenta {
   vdpovisd: string;
   kroky: KrokAgenta[];
   toolVykorystano: string[];
+  /** Агрегована вартість усього ланцюжка викликів (тиждень 8) */
+  usage: { promptTokenCount: number; candidatesTokenCount: number; thoughtsTokenCount: number };
+  model: string;
+  ms: number;
 }
 
 // ============================================================
@@ -44,7 +51,7 @@ const BAZA_PODOROZEY = [
   { krajyna: "Японія", misto: "Токіо", serednyaCina: 2500, sezon: "весна-осінь" },
   { krajyna: "Єгипет", misto: "Хургада", serednyaCina: 800, sezon: "жовтень-березень" },
   { krajyna: "Туреччина", misto: "Анталья", serednyaCina: 700, sezon: "квітень-жовтень" },
-  { krajyna: "Іспанія", mistо: "Барселона", serednyaCina: 1100, sezon: "цілий рік" },
+  { krajyna: "Іспанія", misto: "Барселона", serednyaCina: 1100, sezon: "цілий рік" },
   { krajyna: "Греція", misto: "Санторіні", serednyaCina: 1400, sezon: "травень-вересень" },
   { krajyna: "Таїланд", misto: "Пхукет", serednyaCina: 1800, sezon: "листопад-березень" },
 ];
@@ -116,7 +123,7 @@ export function konverter(valyutaZ: string, valyutaDo: string, suma: number): st
 // 3. СХЕМА ІНСТРУМЕНТІВ (для Gemini function calling)
 // ============================================================
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: "kalkulyator",
     description: "Обчислює математичний вираз. Приклад: '2+2*3', '(10+5)/3', '2^10'",
@@ -174,19 +181,28 @@ const AGENT_PROMPT = `Ти — розумний агент-помічник з �
 // 5. ЦИКЛ АГЕНТА (think → call → result → respond)
 // ============================================================
 
-export async function zapytDoAgenta(zapyt: string): Promise<VidpovidAgenta> {
+export async function zapytDoAgenta(
+  zapyt: string,
+  systemnyiPrompt: string = AGENT_PROMPT
+): Promise<VidpovidAgenta> {
+  const ts1 = Date.now();
   const model = otrymatyGenAI().getGenerativeModel({
-    model: "gemini-3.8-flash",
-    systemInstruction: AGENT_PROMPT,
-    tools: [{ functionDeclarations: TOOLS }],
-    generationConfig: { temperature: 0.2 },
+    model: MODEL_AGENTA,
+    systemInstruction: systemnyiPrompt,
+    tools: [{ functionDeclarations: TOOLS as unknown as FunctionDeclaration[] }],
+    generationConfig: {
+      temperature: 0.2,
+      // Низький рівень мислення: дешевше і швидше; типи SDK ще не знають про поле
+      thinkingConfig: { thinkingLevel: "low" },
+    } as unknown as GenerationConfig,
   });
 
   const kroky: KrokAgenta[] = [];
   let potocnyyKrok = 0;
   const toolVykorystano: string[] = [];
+  const usage = { promptTokenCount: 0, candidatesTokenCount: 0, thoughtsTokenCount: 0 };
 
-  const istoriya: { role: string; parts: unknown[] }[] = [
+  const istoriya: Content[] = [
     { role: "user", parts: [{ text: zapyt }] },
   ];
 
@@ -195,7 +211,16 @@ export async function zapytDoAgenta(zapyt: string): Promise<VidpovidAgenta> {
 
   while (vseredine && potocnyyKrok < 5) {
     const vidpovid = await model.generateContent({ contents: istoriya });
-    const parts = vidpovid.response.candidates[0]?.content?.parts || [];
+    const parts = vidpovid.response.candidates?.[0]?.content?.parts || [];
+
+    // Накопичуємо вартість усіх викликів у ланцюжку (кожен виклик тарифікується окремо)
+    const um = vidpovid.response.usageMetadata;
+    if (um) {
+      usage.promptTokenCount += um.promptTokenCount ?? 0;
+      usage.candidatesTokenCount += um.candidatesTokenCount ?? 0;
+      usage.thoughtsTokenCount +=
+        (um as { thoughtsTokenCount?: number }).thoughtsTokenCount ?? 0;
+    }
 
     const tekstParts = parts.filter((p) => p.text);
     const fcParts = parts.filter((p) => p.functionCall);
@@ -233,7 +258,7 @@ export async function zapytDoAgenta(zapyt: string): Promise<VidpovidAgenta> {
             rezultat = shukatyVPodorozhah(args as { krajyna?: string; misto?: string; maxCina?: number });
             break;
           case "konverterValyut":
-            rezultat = konverterValyut(
+            rezultat = konverter(
               (args as { valyutaZ: string }).valyutaZ,
               (args as { valyutaDo: string }).valyutaDo,
               (args as { suma: number }).suma
@@ -270,5 +295,8 @@ export async function zapytDoAgenta(zapyt: string): Promise<VidpovidAgenta> {
     vdpovisd: finalText,
     kroky,
     toolVykorystano,
+    usage,
+    model: MODEL_AGENTA,
+    ms: Date.now() - ts1,
   };
 }

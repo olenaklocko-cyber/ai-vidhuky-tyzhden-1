@@ -1,0 +1,14 @@
+# Vercel вивантажує все, крім цього (має пріоритет над .gitignore,
+# щоб api/_server.mjs — згенерована функція — потрапив у деплой)
+node_modules
+dist
+.git
+.vercel
+*.log
+.DS_Store
+.env
+.env.*
+.env.local
+.env.bak
+server/.env
+server/.env.bak

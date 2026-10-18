@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/zibatyBazu.mjs && tsc -b && vite build && npm run build:api",
+    "build:api": "esbuild server/server.ts --bundle --platform=node --format=esm --outfile=api/_server.mjs --packages=external --log-level=warning",
+    "baza": "node scripts/zibatyBazu.mjs",
     "lint": "oxlint",
     "preview": "vite preview",
     "server": "tsx server/server.ts",
@@ -28,6 +30,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
     "oxlint": "^1.81.0",
     "tsx": "^4.23.15",
     "typescript": "~6.0.2",
