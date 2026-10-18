@@ -46,7 +46,9 @@ app.use(express.json({ limit: "10mb" }));
 /** POST /api/analiz — головний ендпоінт.
  *  rezhym: "ekonom" (за замовчуванням) — lite-модель + компактний промпт + кеш;
  *          "zvych" — базовий шлях (3.8-flash + повний промпт + thinking).
- *  У відповіді є meta: токени, думки, ціна ($), час (мс), кеш.
+ *  ТИЖДЕНЬ 7: виклик проходить конвеєр безпеки:
+ *  маскування PII → модерація вводу → детектор інʼєкцій → модель → чистка виходу.
+ *  У відповіді: meta (токени/$/мс), bezpeka (що виявлено й зроблено).
  */
 app.post("/api/analiz", async (req, res) => {
   const { vidhuk, rezhym } = req.body as { vidhuk?: string; rezhym?: string };
@@ -60,7 +62,16 @@ app.post("/api/analiz", async (req, res) => {
   const r: RezhymAnalizu = rezhym === "zvych" ? "zvych" : "ekonom";
 
   try {
-    const rez = await analyzuvaty(vidhuk, r);
+    const rez = await analizZOkhoronoyu(vidhuk, r);
+
+    // Модерація: небезпечний вхід не доходить до моделі
+    if (rez.blok) {
+      return res.status(400).json({
+        pomylka: `🚫 Заблоковано модерацією: ${rez.prychyna}`,
+        moderatsiia: { kategoriia: rez.kategoriia, prychyna: rez.prychyna },
+        bezpeka: { pii: rez.pii, moderovano: true },
+      });
+    }
 
     if (!rez.ok) {
       const chyLimit = (rez.pomylka || "").startsWith("⛔");
@@ -70,7 +81,13 @@ app.post("/api/analiz", async (req, res) => {
       });
     }
 
-    return res.json({ ...rez.data, meta: rez.meta, keshHit: rez.keshHit, retry: rez.retry });
+    return res.json({
+      ...rez.data,
+      meta: rez.meta,
+      keshHit: rez.keshHit,
+      retry: rez.retry,
+      bezpeka: rez.bezpeka,
+    });
   } catch (e) {
     console.error("Помилка:", e);
     return res.status(500).json({
@@ -340,8 +357,9 @@ app.post("/api/evals/sudyya", async (req, res) => {
 // ============================================================
 // ТИЖДЕНЬ 6: ВАРТІСТЬ І ШВИДКІСТЬ (токени, кеш, ліміт, експеримент)
 // ============================================================
-import { analyzuvaty, zapustytyEksperyment, otrymatyOstanniyZvit, type RezhymAnalizu } from "./eksperyment.js";
+import { zapustytyEksperyment, otrymatyOstanniyZvit, type RezhymAnalizu } from "./eksperyment.js";
 import { otrymatyStats, vstanovytyLimit, sklasty, ochystytyKesh } from "./vymiruvach.js";
+import { analizZOkhoronoyu, zapustytyAtyaky, otrymatyOstanniAtyaky } from "./bezpeka.js";
 
 /** GET /api/vymiruvach/stats — скільки витрачено: токени, $, час, кеш */
 app.get("/api/vymiruvach/stats", (_req, res) => {
@@ -380,6 +398,27 @@ app.post("/api/eksperyment", async (_req, res) => {
 /** GET /api/eksperyment/ostanniy — останній звіт (щоб не втрачати після перезавантаження) */
 app.get("/api/eksperyment/ostanniy", (_req, res) => {
   res.json(otrymatyOstanniyZvit());
+});
+
+// ============================================================
+// ТИЖДЕНЬ 7: БЕЗПЕКА (тести атак)
+// ============================================================
+
+/** POST /api/bezpeka/atyaky — проганяємо 10 атак через реальний конвеєр */
+app.post("/api/bezpeka/atyaky", async (_req, res) => {
+  try {
+    const zvit = await zapustytyAtyaky();
+    res.json(zvit);
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка тестів атак",
+    });
+  }
+});
+
+/** GET /api/bezpeka/ostanniy — останній звіт атак (після перезавантаження) */
+app.get("/api/bezpeka/ostanniy", (_req, res) => {
+  res.json(otrymatyOstanniAtyaky());
 });
 
 app.listen(PORT, () => {

@@ -774,3 +774,43 @@ textarea:focus {
 .tsyny-tablytsya td:first-child {
   white-space: nowrap;
 }
+
+/* ============ ВКЛАДКА 7: БЕЗПЕКА ============ */
+.ryzyky-obolonka {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.ryzyka-kartka {
+  background: var(--panely, #f8f9ff);
+  border: 1px solid #e3e6f5;
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.ryzyka-kartka h3 { margin: 0 0 8px; font-size: 16px; }
+.ryzyka-kartka p { margin: 6px 0 0; font-size: 13.5px; line-height: 1.5; }
+.ryzyka-ryzyk { color: #b42318; }
+.ryzyka-zakhyst { color: #067647; }
+.ryzyka-kartka code { background: #eef1fb; padding: 1px 5px; border-radius: 5px; }
+
+.bezpeka-lanchyzhok { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.bezpeka-elyement {
+  background: #eef1fb; border: 1px solid #dfe3f7; color: #3b4270;
+  border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600;
+}
+.bezpeka-dobro { background: #e7f7ee; border-color: #b3e6c8; color: #067647; }
+.bezpeka-uvaga { background: #fff4e5; border-color: #ffd8a8; color: #b54708; }
+
+.typ-badge {
+  display: inline-block; padding: 3px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.typ-inektsiia  { background: #fff4e5; color: #b54708; }
+.typ-moderatsiya { background: #fee4e2; color: #b42318; }
+.typ-pii        { background: #e0f2fe; color: #026aa2; }
+.typ-halucynatsiia { background: #f4ebff; color: #6941c6; }
+
+.meta-nevyvpewnst { background: #fff4e5; border-color: #ffd8a8; color: #b54708; }
+.znachennya.nevyvpewnst { color: #b54708 !important; font-size: 17px; }
+.atyaky-tekst { max-width: 300px; font-size: 13px; color: #555; font-style: italic; }
