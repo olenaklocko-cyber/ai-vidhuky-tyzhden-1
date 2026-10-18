@@ -406,6 +406,60 @@ app.post("/api/strim", async (req, res) => {
   }
 });
 
+// ============================================================
+// ТИЖДЕНЬ 5: EVALS (оцінка якості відповідей моделі)
+// ============================================================
+import { zapustytyEvals, sudyyaLLM, type ZvitEvals } from "./evals.js";
+
+/** Останні звіти evals у пам'яті (щоб суддя мав доступ) */
+const ostanniZvity: Record<string, ZvitEvals> = {};
+const ostanniVerdykty: Record<string, string> = {};
+
+/** GET /api/evals/zvity — останні звіти + вердикти (для показу в UI) */
+app.get("/api/evals/zvity", (_req, res) => {
+  res.json({ A: ostanniZvity.A || null, B: ostanniZvity.B || null, verdykty: ostanniVerdykty });
+});
+
+/** POST /api/evals/zapustyty — запускає 10 перевірок (versiya: "A" | "B") */
+app.post("/api/evals/zapustyty", async (req, res) => {
+  const { versiya } = req.body as { versiya?: string };
+  if (versiya !== "A" && versiya !== "B") {
+    return res.status(400).json({ pomylka: 'Вкажіть versiya: "A" (поточний) або "B" (покращений)' });
+  }
+
+  try {
+    const zvit = await zapustytyEvals(versiya);
+    ostanniZvity[versiya] = zvit;
+    res.json(zvit);
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка запуску evals",
+    });
+  }
+});
+
+/** POST /api/evals/sudyya — LLM-суддя аналізує вже готовий звіт */
+app.post("/api/evals/sudyya", async (req, res) => {
+  const { versiya } = req.body as { versiya?: string };
+  if (versiya !== "A" && versiya !== "B") {
+    return res.status(400).json({ pomylka: 'Вкажіть versiya: "A" або "B"' });
+  }
+  const zvit = ostanniZvity[versiya];
+  if (!zvit) {
+    return res.status(400).json({ pomylka: `Спершу запусти evals для версії ${versiya}` });
+  }
+
+  try {
+    const verdikt = await sudyyaLLM(versiya as "A" | "B", zvit.pryypady);
+    ostanniVerdykty[versiya] = verdikt;
+    res.json({ verdikt });
+  } catch (e) {
+    res.status(500).json({
+      pomylka: e instanceof Error ? e.message : "Помилка судді",
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Сервер працює на http://localhost:${PORT}`);
 });

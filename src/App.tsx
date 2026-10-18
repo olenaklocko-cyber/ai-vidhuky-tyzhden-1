@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
 interface Analiz {
@@ -61,6 +61,25 @@ const PRYKLADY_ZAPYTIV_STRIM = [
   "Як працює нейромережа?",
 ];
 
+interface RezultatPrypadu {
+  id: number;
+  opys: string;
+  skladna: boolean;
+  projshov: boolean;
+  pomylky: string[];
+  ochikuvannya: Record<string, unknown>;
+  otzymano: Record<string, unknown> | null;
+  syraPomylka?: string;
+}
+
+interface ZvitEvals {
+  versiya: string;
+  skilkyPrOjshlo: number;
+  vsiogo: number;
+  tryvalistSek: number;
+  pryypady: RezultatPrypadu[];
+}
+
 const TONALNIST_KOLIR: Record<string, string> = {
   позитивна: "#52c41a",
   негативна: "#ff4d4f",
@@ -69,7 +88,7 @@ const TONALNIST_KOLIR: Record<string, string> = {
 };
 
 function App() {
-  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent" | "vision">("analiz");
+  const [vkladka, setVkladka] = useState<"analiz" | "rag" | "agent" | "vision" | "evals">("analiz");
 
   // === Стан для аналізу відгуків ===
   const [vidhuk, setVidhuk] = useState("");
@@ -108,6 +127,27 @@ function App() {
   const [strimTekst, setStrimTekst] = useState("");
   const [strimPratsyuye, setStrimPratsyuye] = useState(false);
   const [strimPomylka, setStrimPomylka] = useState("");
+
+  // === Стан для Evals ===
+  const [zvitA, setZvitA] = useState<ZvitEvals | null>(null);
+  const [zvitB, setZvitB] = useState<ZvitEvals | null>(null);
+  const [evalsPratsyuye, setEvalsPratsyuye] = useState<"" | "A" | "B">("");
+  const [evalsPomylka, setEvalsPomylka] = useState("");
+  const [sudyaVerdykty, setSudyaVerdykty] = useState<Record<string, string>>({});
+  const [sudyyaPratsyuye, setSudyyaPratsyuye] = useState("");
+
+  // Завантажуємо збережені звіти evals при відкритті вкладки
+  useEffect(() => {
+    if (vkladka !== "evals") return;
+    fetch("http://localhost:3001/api/evals/zvity")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.A) setZvitA(d.A);
+        if (d.B) setZvitB(d.B);
+        if (d.verdykty) setSudyaVerdykty(d.verdykty);
+      })
+      .catch(() => {});
+  }, [vkladka]);
 
   const analyzuvaty = async () => {
     if (vidhuk.trim().length < 10) {
@@ -315,6 +355,46 @@ function App() {
     }
   };
 
+  // === Evals: запуск ===
+  const zapustytyEvalsFn = async (versiya: "A" | "B") => {
+    setEvalsPratsyuye(versiya);
+    setEvalsPomylka("");
+    try {
+      const res = await fetch("http://localhost:3001/api/evals/zapustyty", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versiya }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setEvalsPomylka(data.pomylka || "Помилка"); return; }
+      if (versiya === "A") setZvitA(data);
+      else setZvitB(data);
+    } catch {
+      setEvalsPomylka("Сервер не відповідає");
+    } finally {
+      setEvalsPratsyuye("");
+    }
+  };
+
+  // === Evals: LLM-суддя ===
+  const viklykytySudyyu = async (versiya: "A" | "B") => {
+    setSudyyaPratsyuye(versiya);
+    try {
+      const res = await fetch("http://localhost:3001/api/evals/sudyya", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versiya }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setEvalsPomylka(data.pomylka || "Помилка"); return; }
+      setSudyaVerdykty((prev) => ({ ...prev, [versiya]: data.verdikt }));
+    } catch {
+      setEvalsPomylka("Сервер не відповідає");
+    } finally {
+      setSudyyaPratsyuye("");
+    }
+  };
+
   return (
     <div className="app">
       <header className="shapka">
@@ -346,6 +426,12 @@ function App() {
             onClick={() => setVkladka("vision")}
           >
             🎨 Картинки + Стрім
+          </button>
+          <button
+            className={`vkladka ${vkladka === "evals" ? "aktyvna" : ""}`}
+            onClick={() => setVkladka("evals")}
+          >
+            📊 Evals
           </button>
         </div>
       </header>
@@ -704,8 +790,164 @@ function App() {
             </section>
           </>
         )}
+        {/* ============ ВКЛАДКА 5: EVALS ============ */}
+        {vkladka === "evals" && (
+          <>
+            {/* Пояснення */}
+            <section className="blok">
+              <h2>📊 Evals — тест-кейси для якості відповідей</h2>
+              <p className="agent-info">
+                10 перевірок «відгук → очікуваний результат». Автоматичний суддя рахує
+                <strong> точно/мимо</strong>, а LLM-суддя (модель перевіряє модель) пояснює помилки.
+                Запусти спочатку <strong>A</strong> (поточний промпт), потім <strong>B</strong> (покращений) — і порівняй.
+              </p>
+              <div className="evals-knopky">
+                <button
+                  className="btn-analyz"
+                  onClick={() => zapustytyEvalsFn("A")}
+                  disabled={evalsPratsyuye !== ""}
+                >
+                  {evalsPratsyuye === "A" ? "⏳ Версія A (10 запитів)..." : "▶ Запустити A (поточний промпт)"}
+                </button>
+                <button
+                  className="btn-analyz btn-b"
+                  onClick={() => zapustytyEvalsFn("B")}
+                  disabled={evalsPratsyuye !== ""}
+                >
+                  {evalsPratsyuye === "B" ? "⏳ Версія B (10 запитів)..." : "🚀 Запустити B (покращений промпт)"}
+                </button>
+              </div>
+              {evalsPomylka && <div className="pomylka-inline">❌ {evalsPomylka}</div>}
+            </section>
+
+            {/* Порівняльна таблиця */}
+            {(zvitA || zvitB) && (
+              <section className="blok resultat">
+                <h2>🏆 Порівняння: скільки пройшло</h2>
+                <table className="evals-tablytsya">
+                  <thead>
+                    <tr>
+                      <th>Версія</th>
+                      <th>Пройшло</th>
+                      <th>Час</th>
+                      <th>Оцінка</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {zvitA && (
+                      <tr>
+                        <td><strong>A</strong> — поточний</td>
+                        <td className={zvitA.skilkyPrOjshlo >= 7 ? "dobre" : "girko"}>
+                          {zvitA.skilkyPrOjshlo}/{zvitA.vsiogo}
+                        </td>
+                        <td>{zvitA.tryvalistSek}с</td>
+                        <td>{"⭐".repeat(Math.round((zvitA.skilkyPrOjshlo / zvitA.vsiogo) * 5))}</td>
+                      </tr>
+                    )}
+                    {zvitB && (
+                      <tr>
+                        <td><strong>B</strong> — покращений</td>
+                        <td className={zvitB.skilkyPrOjshlo >= 7 ? "dobre" : "girko"}>
+                          {zvitB.skilkyPrOjshlo}/{zvitB.vsiogo}
+                        </td>
+                        <td>{zvitB.tryvalistSek}с</td>
+                        <td>{"⭐".repeat(Math.round((zvitB.skilkyPrOjshlo / zvitB.vsiogo) * 5))}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {zvitA && zvitB && (
+                  <p className="evals-vysnovok">
+                    {zvitB.skilkyPrOjshlo > zvitA.skilkyPrOjshlo
+                      ? `🎉 Покращення: +${zvitB.skilkyPrOjshlo - zvitA.skilkyPrOjshlo} випадків (${zvitA.skilkyPrOjshlo}/${zvitA.vsiogo} → ${zvitB.skilkyPrOjshlo}/${zvitB.vsiogo}). Зміни в промпті спрацювали!`
+                      : zvitB.skilkyPrOjshlo === zvitA.skilkyPrOjshlo
+                        ? `📊 Однаково: ${zvitA.skilkyPrOjshlo}/${zvitA.vsiogo} в обох версій. Покращення не дало приросту — треба інші зміни.`
+                        : `⚠️ Стало гірше: ${zvitA.skilkyPrOjshlo}/${zvitA.vsiogo} → ${zvitB.skilkyPrOjshlo}/${zvitB.vsiogo}. Відкоти зміни або шукай інший підхід.`}
+                  </p>
+                )}
+              </section>
+            )}
+
+            {/* Деталі по випадках */}
+            {zvitA && <DetaliZvitu zvit={zvitA} nasva="A — поточний промпт" />}
+            {zvitB && <DetaliZvitu zvit={zvitB} nasva="B — покращений промпт" />}
+
+            {/* LLM-суддя */}
+            {(zvitA || zvitB) && (
+              <section className="blok">
+                <h2>🧑‍⚖️ LLM-суддя (модель перевіряє модель)</h2>
+                <p className="agent-info">Модель читає результати і пояснює помилки + пропонує зміни.</p>
+                <div className="evals-knopky">
+                  <button className="btn-analyz" onClick={() => viklykytySudyyu("A")} disabled={sudyyaPratsyuye !== "" || !zvitA}>
+                    {sudyyaPratsyuye === "A" ? "⏳ Судить A..." : "🧑‍⚖️ Судити версію A"}
+                  </button>
+                  <button className="btn-analyz btn-b" onClick={() => viklykytySudyyu("B")} disabled={sudyyaPratsyuye !== "" || !zvitB}>
+                    {sudyyaPratsyuye === "B" ? "⏳ Судить B..." : "🧑‍⚖️ Судити версію B"}
+                  </button>
+                </div>
+                {sudyaVerdykty.A && (
+                  <div className="sudyya-verdykt">
+                    <h3>Вердикт для версіїї A:</h3>
+                    <p>{sudyaVerdykty.A}</p>
+                  </div>
+                )}
+                {sudyaVerdykty.B && (
+                  <div className="sudyya-verdykt">
+                    <h3>Вердикт для версіїї B:</h3>
+                    <p>{sudyaVerdykty.B}</p>
+                  </div>
+                )}
+              </section>
+            )}
+          </>
+        )}
       </main>
     </div>
+  );
+}
+
+/** Детальна таблиця по 10 випадках для однієї версії */
+function DetaliZvitu({ zvit, nasva }: { zvit: ZvitEvals; nasva: string }) {
+  return (
+    <section className="blok">
+      <h2>📋 {nasva} — {zvit.skilkyPrOjshlo}/{zvit.vsiogo} пройшло</h2>
+      <table className="evals-detali">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Що перевіряємо</th>
+            <th>Очікування</th>
+            <th>Отримано</th>
+            <th>Результат</th>
+          </tr>
+        </thead>
+        <tbody>
+          {zvit.pryypady.map((p) => (
+            <tr key={p.id} className={p.projshov ? "ryadok-dobro" : "ryadok-girko"}>
+              <td>{p.id}{p.skladna ? " 🔥" : ""}</td>
+              <td>{p.opys}</td>
+              <td><code>{JSON.stringify(p.ochikuvannya)}</code></td>
+              <td>
+                {p.otzymano ? (
+                  <code>{JSON.stringify(p.otzymano)}</code>
+                ) : (
+                  <span className="pomylka-inline">❌ {p.syraPomylka}</span>
+                )}
+              </td>
+              <td>
+                {p.projshov ? "✅" : "❌"}
+                {!p.projshov && p.pomylky.length > 0 && (
+                  <div className="pomylky-spysok">
+                    {p.pomylky.map((m, i) => <div key={i}>• {m}</div>)}
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="evals-prymitka">🔥 = складний випадок (сарказм, короткі, неявна відмова тощо)</p>
+    </section>
   );
 }
 
